@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gemini Video Analyzer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      // This config object defines the entire color palette and theme.
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: '#1a1a1a', // Main background color
+              secondary: '#2a2a2a', // Panel and sidebar backgrounds
+              accent: '#3a3a3a', // Borders, dividers, and subtle backgrounds
+              'text-primary': '#e0e0e0', // Primary text color
+              'text-secondary': '#b0b0b0', // Secondary/muted text color
+              brand: '#52525b', // Buttons, interactive elements, focus rings
+              'brand-hover': '#71717a', // Hover state for brand color elements
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      /* General styles for a clean, modern look */
+      body {
+        background-color: #1a1a1a; /* Corresponds to 'bg-primary' */
+        color: #e0e0e0; /* Corresponds to 'text-text-primary' */
+      }
+
+      /* Hide scrollbar for a cleaner interface */
+      ::-webkit-scrollbar {
+        display: none;
+      }
+      * {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+    </style>
+    <script type="importmap">
+      {
+        "imports": {
+          "@google/genai": "https://aistudiocdn.com/@google/genai@^1.26.0",
+          "react/": "https://aistudiocdn.com/react@^19.2.0/",
+          "react": "https://aistudiocdn.com/react@^19.2.0",
+          "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

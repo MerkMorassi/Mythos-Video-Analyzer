@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Video Analyzer",
+  "description": "Upload a video or provide a URL, then use Gemini Pro to analyze its contents based on your prompts. The application extracts keyframes from the video and sends them to the model for detailed visual understanding and analysis.",
+  "requestFramePermissions": []
+}
