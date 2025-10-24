@@ -4,6 +4,7 @@ import { AnalysisResult } from './components/AnalysisResult';
 import { Loader } from './components/Loader';
 import { analyzeVideo } from './services/geminiService';
 import { extractFramesFromVideo } from './utils/video';
+import { FramePreview } from './components/FramePreview';
 
 export default function App() {
   const [videoSource, setVideoSource] = useState<File | string | null>(null);
@@ -12,11 +13,13 @@ export default function App() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [progressMessage, setProgressMessage] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const [extractedFrames, setExtractedFrames] = useState<string[]>([]);
 
   const handleVideoChange = useCallback((source: File | string | null) => {
     setVideoSource(source);
     setAnalysisResult(null);
     setError(null);
+    setExtractedFrames([]);
   }, []);
 
   const handleAnalyzeClick = async () => {
@@ -27,6 +30,7 @@ export default function App() {
     setIsLoading(true);
     setAnalysisResult(null);
     setError(null);
+    setExtractedFrames([]);
 
     let videoUrl = '';
     let isObjectURL = false;
@@ -41,6 +45,7 @@ export default function App() {
 
       setProgressMessage('Extracting frames from video... (this may take a moment)');
       const frames = await extractFramesFromVideo(videoUrl);
+      setExtractedFrames(frames);
 
       if (frames.length === 0) {
         throw new Error('Could not extract any frames from the video. Please check the video file or URL.');
@@ -68,7 +73,7 @@ export default function App() {
       <main className="container mx-auto px-4 py-8">
         <header className="text-center mb-10">
           <h1 className="text-4xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-brand to-brand-hover">
-            Gemini Video Analyzer
+            MythOS Video Analyzer
           </h1>
           <p className="mt-2 text-lg text-text-secondary">
             Unlock insights from your videos with the power of Gemini Pro.
@@ -105,15 +110,21 @@ export default function App() {
 
           {/* --- RESULTS COLUMN --- */}
           <div className="bg-secondary/50 border border-accent rounded-lg p-6 min-h-[400px] flex flex-col justify-center">
-            {isLoading && <Loader message={progressMessage} />}
-            {error && !isLoading && (
+            {isLoading ? (
+              <div className="flex flex-col items-center justify-center w-full">
+                {extractedFrames.length > 0 && <FramePreview frames={extractedFrames} />}
+                <div className={extractedFrames.length > 0 ? 'mt-4' : ''}>
+                  <Loader message={progressMessage} />
+                </div>
+              </div>
+            ) : error ? (
               <div className="text-center text-red-400">
                 <h3 className="text-lg font-semibold mb-2">Error</h3>
                 <p>{error}</p>
               </div>
-            )}
-            {analysisResult && !isLoading && <AnalysisResult result={analysisResult} />}
-            {!isLoading && !analysisResult && !error && (
+            ) : analysisResult ? (
+              <AnalysisResult result={analysisResult} />
+            ) : (
               <div className="text-center text-text-secondary">
                 <h3 className="text-lg font-semibold">Your analysis will appear here</h3>
                 <p>Upload a video and enter a prompt to get started.</p>
