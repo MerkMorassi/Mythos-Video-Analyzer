@@ -6,15 +6,14 @@ import { Loader } from './components/Loader';
 import { analyzeVideo, analyzeImage, generateSpeech, createChat } from './services/geminiService';
 import { extractFramesFromVideo } from './utils/video';
 import { FramePreview } from './components/FramePreview';
-import { decode, decodeAudioData } from './utils/audio';
 import { WarningIcon } from './components/icons/WarningIcon';
-import { getAgents, saveAgent, deleteAgent, Agent, getDefaultAgentId, setDefaultAgentId } from './services/agentService';
+// Fixed: Imported saveAgent and deleteAgent which were missing
+import { getAgents, Agent, getDefaultAgentId, setDefaultAgentId, saveAgent, deleteAgent } from './services/agentService';
 import { AgentsView } from './components/AgentsView';
 import { AnalyzerIcon } from './components/icons/AnalyzerIcon';
 import { AgentsIcon } from './components/icons/AgentsIcon';
-import { Chat } from '@google/genai';
+import { Chat, Part, Content } from '@google/genai';
 import { ChatInterface } from './components/ChatInterface';
-import { UserIcon } from './components/icons/UserIcon';
 
 
 const fileToBase64 = (file: File): Promise<string> =>
@@ -50,13 +49,37 @@ const fetchKnowledgeBaseContext = async (url: string, query: string): Promise<{c
     }
 };
 
+const CINEMATOGRAPHY_SUGGESTIONS = {
+  video: [
+    "Analyze camera movement: Identify tracking shots, push-ins, pans, and establishing shots.",
+    "Estimate technical details: Lens focal length, aperture, shutter angle, and depth of field.",
+    "Break down the scene: Lighting ratios, blocking, and color grading palette.",
+    "Describe the visual narrative: Mood, tone, and storytelling techniques.",
+    "Reverse Engineer Prompt: Create a detailed generative video prompt to replicate this sequence, focusing on cinematography and style."
+  ],
+  image: [
+    "Analyze lighting: Key ratios, color temperature, and grading style.",
+    "Estimate camera settings: Focal length, aperture, and probable lens choice.",
+    "Break down composition: Framing, rule of thirds, and visual balance.",
+    "Describe the visual style: Mood, tone, and photographic aesthetic.",
+    "Reverse Engineer Prompt: Create a detailed generative image prompt to replicate this shot, focusing on cinematography and lighting."
+  ]
+};
+
+interface ChatMessagePart {
+  text?: string;
+  inlineData?: {
+    mimeType: string;
+    data: string;
+  };
+}
+
 
 export default function App() {
   const [mediaSource, setMediaSource] = useState<File | string | null>(null);
   const [mediaType, setMediaType] = useState<'video' | 'image'>('video');
   const [prompt, setPrompt] = useState<string>('');
   const [systemPrompt, setSystemPrompt] = useState<string>('');
-  const [showSystemPrompt, setShowSystemPrompt] = useState<boolean>(false);
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [progressMessage, setProgressMessage] = useState<string>('');
@@ -66,9 +89,10 @@ export default function App() {
   const [extractedFrames, setExtractedFrames] = useState<string[]>([]);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
+  const [isAudioGenerating, setIsAudioGenerating] = useState<boolean>(false);
+  const [playAudioOnLoad, setPlayAudioOnLoad] = useState<boolean>(false);
   const [clearKey, setClearKey] = useState<number>(0);
-  const [frameCount, setFrameCount] = useState<number>(16);
-
+  
   // Agent management state
   const [activeTab, setActiveTab] = useState<'analyzer' | 'agents'>('analyzer');
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -76,7 +100,7 @@ export default function App() {
   
   // Chat state
   const [chatSession, setChatSession] = useState<Chat | null>(null);
-  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'model'; parts: { text: string }[] }[]>([]);
+  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'model'; parts: ChatMessagePart[] }[]>([]);
   const [chatMessage, setChatMessage] = useState<string>('');
   const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
 
@@ -101,11 +125,9 @@ export default function App() {
 
   const activeAgent = agents.find(a => a.id === defaultAgentId) || agents[0];
 
-  // Update system prompt in UI if it's not a custom agent
+  // Update system prompt in UI
   useEffect(() => {
-    if (activeAgent && !activeAgent.isCustom) {
-      // Allow manual override for default agents
-    } else if (activeAgent?.isCustom) {
+    if (activeAgent) {
       setSystemPrompt(activeAgent.systemPrompt);
     }
   }, [activeAgent]);
@@ -137,10 +159,11 @@ export default function App() {
 
 
   useEffect(() => {
-    if (activeAgent?.autoPlayAudio && audioBuffer && !isSpeaking) {
+    if (audioBuffer && playAudioOnLoad && !isSpeaking) {
       playAudio();
+      setPlayAudioOnLoad(false);
     }
-  }, [audioBuffer, isSpeaking, playAudio, activeAgent]);
+  }, [audioBuffer, playAudioOnLoad, isSpeaking, playAudio]);
 
   const stopAudio = useCallback(() => {
     if (audioSourceRef.current) {
@@ -158,6 +181,8 @@ export default function App() {
     setRagWarning(null);
     setExtractedFrames([]);
     setAudioBuffer(null);
+    setIsAudioGenerating(false);
+    setPlayAudioOnLoad(false);
     stopAudio();
     setChatSession(null);
     setChatHistory([]);
@@ -174,12 +199,37 @@ export default function App() {
     setRagWarning(null);
     setExtractedFrames([]);
     setAudioBuffer(null);
+    setIsAudioGenerating(false);
     stopAudio();
     // Reset chat
     setChatSession(null);
     setChatHistory([]);
     setChatMessage('');
   }, [stopAudio]);
+
+  const handleGenerateAudio = async (textToSpeak: string) => {
+    if (!activeAgent?.voice) return;
+
+    setIsAudioGenerating(true);
+    setAudioError(null);
+
+    try {
+        // Strip HTML tags for TTS
+        const plainText = textToSpeak.replace(/<[^>]*>/g, '');
+        const audioData = await generateSpeech(plainText, activeAgent.voice, activeAgent.speakingRate || 1.0);
+        const audioBytes = Uint8Array.from(atob(audioData), c => c.charCodeAt(0));
+        const audioCtx = getAudioContext();
+        const buffer = await audioCtx.decodeAudioData(audioBytes.buffer);
+        
+        setAudioBuffer(buffer);
+        setPlayAudioOnLoad(true); // Automatically play after manual generation
+    } catch (audioErr) {
+         console.error("Audio generation failed", audioErr);
+         setAudioError("Audio generation failed. Please try again.");
+    } finally {
+        setIsAudioGenerating(false);
+    }
+  };
 
   const handleAnalyzeClick = async () => {
     if (!mediaSource || !prompt.trim()) {
@@ -198,6 +248,8 @@ export default function App() {
     setExtractedFrames([]);
     stopAudio();
     setAudioBuffer(null);
+    setIsAudioGenerating(false);
+    setPlayAudioOnLoad(false);
     setChatSession(null);
     setChatHistory([]);
     setChatMessage('');
@@ -213,356 +265,343 @@ export default function App() {
         setProgressMessage('Searching knowledge base...');
         const { context, warning } = await fetchKnowledgeBaseContext(knowledgeBaseUrl, prompt);
         if (warning) {
-          setRagWarning(warning);
+             setRagWarning(warning);
         }
         if (context) {
-          analysisPrompt = `${context}Based on the context above, please answer the user's request: ${prompt}`;
+             analysisPrompt = `Context from Knowledge Base:\n${context}\n\nUser Prompt: ${prompt}`;
         }
       }
-      
-      let resultText: string;
 
-      if (mediaType === 'image' && mediaSource instanceof File) {
-        setProgressMessage('Preparing image for analysis...');
-        const imageBase64 = await fileToBase64(mediaSource);
-        setExtractedFrames([imageBase64]);
+      let resultText = '';
+      let historyParts: Part[] = [];
 
-        setProgressMessage('Analyzing image with Gemini...');
-        resultText = await analyzeImage(analysisPrompt, imageBase64, mediaSource.type, finalSystemPrompt);
-
-      } else if (mediaType === 'video') {
-        let videoUrl = '';
-        let isObjectURL = false;
-        try {
-          if (mediaSource instanceof File) {
-            videoUrl = URL.createObjectURL(mediaSource);
-            isObjectURL = true;
-          } else {
-            videoUrl = mediaSource as string;
-          }
-
-          setProgressMessage('Extracting frames from video...');
-          const frames = await extractFramesFromVideo(videoUrl, frameCount);
-          setExtractedFrames(frames);
-          if (frames.length === 0) {
-            throw new Error('Could not extract any frames from the video. Please check the video file or URL.');
-          }
-
-          setProgressMessage(`Analyzing ${frames.length} frames with Gemini...`);
-          resultText = await analyzeVideo(analysisPrompt, frames, finalSystemPrompt);
-        } finally {
-          if (isObjectURL && videoUrl) {
-            URL.revokeObjectURL(videoUrl);
+      if (mediaType === 'video') {
+        setProgressMessage('Extracting frames...');
+        let frames: string[] = [];
+        
+        if (typeof mediaSource === 'string') {
+          frames = await extractFramesFromVideo(mediaSource, 16);
+        } else if (mediaSource instanceof File) {
+          const objectUrl = URL.createObjectURL(mediaSource);
+          try {
+            frames = await extractFramesFromVideo(objectUrl, 16);
+          } finally {
+            URL.revokeObjectURL(objectUrl);
           }
         }
+        
+        setExtractedFrames(frames);
+        setProgressMessage('Analyzing video content...');
+        resultText = await analyzeVideo(analysisPrompt, frames, finalSystemPrompt);
+        
+        // Prepare history for chat
+        historyParts = [
+            { text: analysisPrompt },
+            ...frames.map(f => ({ inlineData: { mimeType: 'image/jpeg', data: f } }))
+        ];
+
       } else {
-        throw new Error('Invalid media type or source provided.');
-      }
-      
-      if (!resultText) {
-        throw new Error('Analysis returned an empty result. The model may not have been able to process the request.');
+        setProgressMessage('Processing image...');
+        let base64Image = '';
+        
+        if (mediaSource instanceof File) {
+          base64Image = await fileToBase64(mediaSource);
+        } else if (typeof mediaSource === 'string') {
+             try {
+                const response = await fetch(mediaSource);
+                const blob = await response.blob();
+                base64Image = await fileToBase64(new File([blob], "image.jpg", { type: blob.type }));
+             } catch (e) {
+                 throw new Error("Could not process image URL. Please upload the file directly.");
+             }
+        }
+        
+        setProgressMessage('Analyzing image...');
+        resultText = await analyzeImage(analysisPrompt, base64Image, 'image/jpeg', finalSystemPrompt);
+        setExtractedFrames([base64Image]); // Show preview
+
+        // Prepare history for chat
+        historyParts = [
+            { text: analysisPrompt },
+            { inlineData: { mimeType: 'image/jpeg', data: base64Image } }
+        ];
       }
 
       setAnalysisResult(resultText);
-      
-      // Clean text for chat history and speech (remove HTML tags)
-      const plainTextResult = resultText.replace(/<[^>]*>?/gm, '');
 
-      // --- Initialize Chat Session ---
-      const initialHistory = [
-        { role: 'user' as const, parts: [{ text: `My prompt for this ${mediaType} was: "${prompt}"` }] },
-        { role: 'model' as const, parts: [{ text: plainTextResult }] },
+      // Initialize Chat Session with the context of the analysis
+      const initialHistory: Content[] = [
+          {
+              role: 'user',
+              parts: historyParts
+          },
+          {
+              role: 'model',
+              parts: [{ text: resultText }]
+          }
       ];
       
-      // Append instruction for plain text chat
-      const chatSystemInstruction = (finalSystemPrompt || "") + "\nIMPORTANT: Provide all responses in plain text. Do not use Markdown formatting (no bold, italics, lists, etc). Do not use HTML.";
-      const chat = createChat(chatSystemInstruction, initialHistory);
-      setChatSession(chat);
-      setChatHistory(initialHistory);
-      // --- End Chat Initialization ---
+      const newChat = createChat(finalSystemPrompt, initialHistory);
+      setChatSession(newChat);
+      setChatHistory([]); 
 
-
-      try {
-        setProgressMessage('Generating audio for the result...');
-
-        if (plainTextResult.trim()) {
-          const agentVoice = activeAgent?.voice || 'Kore';
-          const agentSpeakingRate = activeAgent?.speakingRate ?? 1.0;
-          const audioData = await generateSpeech(plainTextResult, agentVoice, agentSpeakingRate);
-          const audioCtx = getAudioContext();
-          const decodedBytes = decode(audioData);
-          const buffer = await decodeAudioData(decodedBytes, audioCtx, 24000, 1);
-          setAudioBuffer(buffer);
-        } else {
-          setAudioError("Analysis result contains no text to speak.");
-        }
-      } catch (audioErr) {
-        const audioErrorMessage = audioErr instanceof Error ? audioErr.message : 'An unknown error occurred while generating speech.';
-        setAudioError(audioErrorMessage);
-        console.error("Audio Generation Error:", audioErr);
+      // Auto-generate audio only if explicitly requested by agent settings
+      if (activeAgent && activeAgent.voice && activeAgent.autoPlayAudio) {
+          // Trigger generation without blocking the UI
+          handleGenerateAudio(resultText);
       }
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       setError(errorMessage);
-      console.error(err);
     } finally {
       setIsLoading(false);
       setProgressMessage('');
     }
   };
-  
-  const handleSendChatMessage = async () => {
-    if (!chatMessage.trim() || !chatSession || isChatLoading) return;
 
-    const newUserMessage = { role: 'user' as const, parts: [{ text: chatMessage }] };
-    setChatHistory(prev => [...prev, newUserMessage]);
-    setChatMessage('');
+  const handleSendMessage = async (files?: File[]) => {
+    if (!chatSession || (!chatMessage.trim() && (!files || files.length === 0))) return;
+
     setIsChatLoading(true);
+    const currentMessage = chatMessage; 
+    setChatMessage(''); 
 
     try {
-      const response = await chatSession.sendMessage({ message: chatMessage });
-      const modelResponseText = response.text;
-      const modelResponse = { role: 'model' as const, parts: [{ text: modelResponseText }] };
-      setChatHistory(prev => [...prev, modelResponse]);
+        const parts: Part[] = [];
+        
+        // Add uploaded files to parts
+        if (files && files.length > 0) {
+            for (const file of files) {
+                const base64 = await fileToBase64(file);
+                parts.push({
+                    inlineData: {
+                        mimeType: file.type,
+                        data: base64
+                    }
+                });
+            }
+        }
+        
+        // Add text to parts
+        if (currentMessage.trim()) {
+            parts.push({ text: currentMessage });
+        }
+
+        // Optimistic update for UI
+        const newHistoryEntry = { 
+            role: 'user' as const, 
+            parts: parts.map(p => ({
+                text: p.text,
+                inlineData: p.inlineData ? {
+                    mimeType: p.inlineData.mimeType,
+                    data: p.inlineData.data
+                } : undefined
+            }))
+        };
+        
+        setChatHistory(prev => [...prev, newHistoryEntry]);
+
+        // Send to Gemini
+        const result = await chatSession.sendMessage({ message: parts });
+        const responseText = result.text;
+        
+        if (responseText) {
+             setChatHistory(prev => [...prev, { role: 'model', parts: [{ text: responseText }] }]);
+        }
+
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-      const errorResponse = { role: 'model' as const, parts: [{ text: `Sorry, I encountered an error: ${errorMessage}` }] };
-      setChatHistory(prev => [...prev, errorResponse]);
-      console.error("Chat Error:", err);
+        console.error("Chat error:", err);
+        setChatHistory(prev => [...prev, { role: 'model', parts: [{ text: "Sorry, I encountered an error processing your message. Please try again." }] }]);
     } finally {
-      setIsChatLoading(false);
+        setIsChatLoading(false);
     }
   };
 
-  const handleSaveAgent = (agentData: Omit<Agent, 'id' | 'isCustom'> & { id?: string }) => {
-    saveAgent(agentData);
-    setAgents(getAgents());
+  const handleSuggestionClick = (suggestion: string) => {
+    setPrompt(suggestion);
   };
 
-  const handleDeleteAgent = (agentId: string) => {
-    deleteAgent(agentId);
-    const updatedAgents = getAgents();
-    setAgents(updatedAgents);
-    if (defaultAgentId === agentId && updatedAgents.length > 0) {
-      const newDefault = updatedAgents[0].id;
-      setDefaultAgentId(newDefault);
-      setDefaultAgentIdState(newDefault);
-    }
-  };
-
-  const handleSetDefaultAgent = (agentId: string) => {
-    setDefaultAgentId(agentId);
-    setDefaultAgentIdState(agentId);
-  };
-
+  // --- Render ---
 
   return (
-    <div className="min-h-screen bg-primary text-text-primary font-sans">
-      <main className="container mx-auto px-4 py-8">
-        <header className="text-center mb-6">
-          <h1 className="text-4xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-brand to-brand-hover">
-            Video & Image Analyzer
-          </h1>
-          <p className="mt-2 text-lg text-text-secondary">
-            Unlock insights from your visual media with the power of Gemini.
-          </p>
-        </header>
-
-        <div className="mb-8 flex justify-center border-b border-accent">
-          <button onClick={() => setActiveTab('analyzer')} className={`flex items-center gap-2 px-6 py-3 font-semibold transition-colors ${activeTab === 'analyzer' ? 'text-text-primary border-b-2 border-brand' : 'text-text-secondary hover:text-text-primary'}`}>
-            <AnalyzerIcon className="w-5 h-5" /> Analyzer
+    <div className="min-h-screen bg-primary text-text-primary font-sans selection:bg-brand selection:text-white">
+       {/* Tab Navigation */}
+      <div className="border-b border-accent bg-secondary/30 sticky top-0 z-10 backdrop-blur-md">
+        <div className="max-w-3xl mx-auto flex">
+          <button
+            onClick={() => setActiveTab('analyzer')}
+            className={`flex-1 py-4 text-sm font-semibold flex items-center justify-center gap-2 transition-colors relative ${
+              activeTab === 'analyzer' ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            <AnalyzerIcon className="w-5 h-5" />
+            Analyzer
+            {activeTab === 'analyzer' && (
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand animate-fade-in"></span>
+            )}
           </button>
-          <button onClick={() => setActiveTab('agents')} className={`flex items-center gap-2 px-6 py-3 font-semibold transition-colors ${activeTab === 'agents' ? 'text-text-primary border-b-2 border-brand' : 'text-text-secondary hover:text-text-primary'}`}>
-            <AgentsIcon className="w-5 h-5" /> Agents
+          <button
+            onClick={() => setActiveTab('agents')}
+             className={`flex-1 py-4 text-sm font-semibold flex items-center justify-center gap-2 transition-colors relative ${
+              activeTab === 'agents' ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            <AgentsIcon className="w-5 h-5" />
+            Agents
+             {activeTab === 'agents' && (
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand animate-fade-in"></span>
+            )}
           </button>
         </div>
-        
-        {activeTab === 'analyzer' && (
-           <div className="flex flex-col gap-8 max-w-5xl mx-auto w-full">
-            {/* --- CONTROLS SECTION --- */}
-            <div className="flex flex-col space-y-6">
+      </div>
+
+      <main className="max-w-3xl mx-auto p-6 pb-20">
+        {activeTab === 'analyzer' ? (
+          <div className="flex flex-col space-y-8 animate-fade-in">
+            {/* Header */}
+            <div className="text-center space-y-2">
+               <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-text-secondary">
+                AI Media Analyzer
+              </h1>
+              <p className="text-text-secondary">
+                Upload media for detailed cinematography & visual analysis.
+              </p>
+               {/* Active Agent - Hidden from visual layout but logically present, can be shown as badge if needed */}
+               <div className="hidden">
+                   Active Agent: {activeAgent?.name}
+               </div>
+            </div>
+
+            {/* Media Input */}
+            <div className="bg-secondary/30 p-6 rounded-xl border border-accent shadow-sm">
               <MediaInput key={clearKey} onMediaChange={handleMediaChange} />
+            </div>
 
-              {mediaType === 'video' && (
-                <div>
-                    <label htmlFor="frame-count" className="block text-sm font-medium text-text-primary mb-2">
-                        Frame Extraction Detail ({frameCount} frames)
-                    </label>
-                    <input
-                        id="frame-count"
-                        type="range"
-                        min="4"
-                        max="32"
-                        step="4"
-                        value={frameCount}
-                        onChange={(e) => setFrameCount(parseInt(e.target.value, 10))}
-                        className="w-full h-2 bg-secondary rounded-lg appearance-none cursor-pointer accent-brand"
-                        disabled={isLoading}
-                    />
-                    <div className="flex justify-between text-xs text-text-secondary mt-1 px-1">
-                        <span>Less Detail</span>
-                        <span>More Detail</span>
-                    </div>
-                </div>
-              )}
-
+            {/* Analysis Controls */}
+            <div className="space-y-4">
               <div>
-                <label htmlFor="prompt" className="block text-sm font-medium text-text-primary mb-2">
-                  2. What do you want to analyze?
+                <label htmlFor="prompt" className="block text-sm font-medium text-text-secondary mb-2">
+                  2. Analysis Prompt
                 </label>
                 <textarea
                   id="prompt"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder={
-                    mediaType === 'video'
-                      ? "e.g., 'Summarize this video', 'What is the main activity happening?', 'Describe the objects on the table.'"
-                      : "e.g., 'Describe this image in detail', 'What objects are in this picture?', 'Generate a creative caption.'"
-                  }
-                  className="w-full h-32 p-3 bg-secondary border border-accent rounded-lg focus:ring-2 focus:ring-brand focus:outline-none transition duration-200 resize-none placeholder-text-secondary/70"
-                  disabled={isLoading}
+                  placeholder={mediaType === 'video' ? "Describe the video content, ask about cinematography, or request a summary..." : "Describe the image, ask about lighting, composition, or details..."}
+                  className="w-full h-28 p-4 bg-secondary border border-accent rounded-xl focus:ring-2 focus:ring-brand focus:outline-none transition duration-200 resize-none placeholder-text-secondary/70 shadow-inner text-base"
                 />
-                <button
-                  onClick={() => setShowSystemPrompt(!showSystemPrompt)}
-                  className="text-xs text-text-secondary hover:text-text-primary transition-colors mt-2 px-1"
-                  aria-expanded={showSystemPrompt}
-                >
-                  {showSystemPrompt ? '− Hide System Prompt' : '+ Add System Prompt (Optional)'}
-                </button>
-                {showSystemPrompt && (
-                  <div className="mt-2">
-                    <textarea
-                      id="system-prompt"
-                      value={systemPrompt}
-                      onChange={(e) => setSystemPrompt(e.target.value)}
-                      placeholder="Define the agent's persona or provide specific instructions. e.g., 'You are a helpful assistant who is an expert in cinematography.'"
-                      className="w-full h-24 p-3 bg-secondary/50 border border-accent rounded-lg focus:ring-2 focus:ring-brand focus:outline-none transition duration-200 resize-none placeholder-text-secondary/70 text-sm"
-                      disabled={isLoading || (activeAgent?.isCustom ?? false)}
-                    />
-                    {activeAgent?.isCustom && (
-                        <p className="text-xs text-brand-hover px-1 mt-1">System prompt is controlled by the selected custom agent.</p>
-                    )}
-                  </div>
-                )}
               </div>
               
-              <div>
-                <label className="block text-sm font-medium text-text-primary mb-2">
-                  3. Active Agent
-                </label>
-                {activeAgent ? (
-                    <div className="flex items-center gap-3 p-3 bg-secondary border border-accent rounded-lg">
-                    {activeAgent.isCustom && (
-                        activeAgent.avatar ? (
-                        <img src={activeAgent.avatar} alt={activeAgent.name} className="w-10 h-10 rounded-full object-cover bg-accent" />
-                        ) : (
-                        <div className="w-10 h-10 rounded-full bg-accent flex items-center justify-center flex-shrink-0">
-                            <UserIcon className="w-6 h-6 text-text-secondary"/>
-                        </div>
-                        )
-                    )}
-                    <span className={`font-semibold ${!activeAgent.isCustom ? 'pl-2' : ''}`}>{activeAgent.name}</span>
-                    </div>
-                ) : (
-                    <div className="p-3 bg-secondary border border-accent rounded-lg text-text-secondary">
-                        No agent available. Please create one in the Agents tab.
-                    </div>
-                )}
+              {/* Suggestions */}
+               <div className="flex flex-wrap gap-2">
+                {CINEMATOGRAPHY_SUGGESTIONS[mediaType].map((suggestion, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => handleSuggestionClick(suggestion)}
+                    className="text-xs px-3 py-1.5 rounded-full bg-accent/50 hover:bg-brand hover:text-white border border-accent transition-colors text-text-secondary text-left"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
               </div>
-
-              <div className="flex items-center space-x-3">
+              
+              <div className="flex space-x-4 items-stretch pt-2">
                 <button
                   onClick={handleAnalyzeClick}
                   disabled={isLoading || !mediaSource || !prompt.trim()}
-                  className="w-full bg-brand text-text-primary font-bold py-3 px-4 rounded-lg hover:bg-brand-hover disabled:bg-accent disabled:cursor-not-allowed transition-all duration-300 transform hover:scale-105 disabled:scale-100 flex items-center justify-center"
+                  className="flex-1 py-3 bg-brand text-text-primary font-semibold rounded-xl hover:bg-brand-hover disabled:bg-accent disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl active:scale-95 text-base flex items-center justify-center"
                 >
-                  {isLoading ? 'Analyzing...' : `✨ Analyze ${mediaType === 'video' ? 'Video' : 'Image'}`}
+                  {isLoading ? 'Analyzing...' : 'Analyze'}
                 </button>
-                 <button
+                <button
                   onClick={resetState}
-                  disabled={isLoading}
-                  className="px-4 py-3 bg-accent text-text-secondary font-semibold rounded-lg hover:bg-accent/70 transition-colors"
-                  aria-label="Clear all inputs and results"
+                  className="px-6 py-3 bg-secondary border border-accent text-text-secondary font-semibold rounded-xl hover:bg-accent hover:text-text-primary transition-colors flex items-center justify-center"
                 >
                   Clear All
                 </button>
               </div>
             </div>
 
-            {/* --- RESULTS SECTION --- */}
-            <div className="bg-secondary/50 border border-accent rounded-lg p-6 min-h-[400px] flex flex-col justify-center">
-              {isLoading ? (
-                <div className="flex flex-col items-center justify-center w-full">
-                  {extractedFrames.length > 0 && (
-                     <FramePreview 
-                       frames={extractedFrames} 
-                       title={mediaType === 'video' ? 'Extracted Frames for Analysis:' : 'Image for Analysis:'}
-                     />
-                  )}
-                  <div className={extractedFrames.length > 0 ? 'mt-4' : ''}>
-                    <Loader message={progressMessage} mediaType={mediaType} />
+            {/* Errors & Warnings */}
+            {(error || audioError || ragWarning) && (
+                <div className="space-y-3">
+                    {error && (
+                        <div className="p-4 bg-red-900/20 border border-red-500/30 rounded-xl flex items-start gap-3 text-red-200 animate-fade-in">
+                            <WarningIcon className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                            <p className="text-sm">{error}</p>
+                        </div>
+                    )}
+                    {ragWarning && (
+                        <div className="p-4 bg-yellow-900/20 border border-yellow-500/30 rounded-xl flex items-start gap-3 text-yellow-200 animate-fade-in">
+                            <WarningIcon className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                            <p className="text-sm">{ragWarning}</p>
+                        </div>
+                    )}
+                     {audioError && (
+                        <div className="p-4 bg-orange-900/20 border border-orange-500/30 rounded-xl flex items-start gap-3 text-orange-200 animate-fade-in">
+                            <WarningIcon className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                            <p className="text-sm">{audioError}</p>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Loader */}
+            {isLoading && (
+              <div className="py-12 animate-fade-in">
+                <Loader message={progressMessage} mediaType={mediaType} />
+              </div>
+            )}
+
+            {/* Results */}
+            {!isLoading && (analysisResult || extractedFrames.length > 0) && (
+              <div className="space-y-8 animate-fade-in">
+                <div className="border-t border-accent pt-8">
+                    <FramePreview frames={extractedFrames} title={mediaType === 'video' ? 'Extracted Keyframes' : 'Analyzed Image'} />
+                </div>
+                
+                {analysisResult && (
+                  <div className="bg-secondary/30 border border-accent rounded-xl p-6 shadow-sm">
+                     <AnalysisResult
+                        result={analysisResult}
+                        onPlayAudio={playAudio}
+                        onStopAudio={stopAudio}
+                        isSpeaking={isSpeaking}
+                        hasAudio={!!audioBuffer}
+                        onGenerateAudio={() => handleGenerateAudio(analysisResult)}
+                        isAudioGenerating={isAudioGenerating}
+                      />
                   </div>
-                </div>
-              ) : error ? (
-                <div className="text-center text-red-400">
-                  <h3 className="text-lg font-semibold mb-2">Error</h3>
-                  <p>{error}</p>
-                </div>
-              ) : analysisResult ? (
-                <>
-                  {ragWarning && (
-                     <div className="mb-4 flex items-center gap-3 rounded-lg border border-yellow-500/30 bg-yellow-900/20 p-3 text-sm text-yellow-400">
-                      <WarningIcon className="h-5 w-5 flex-shrink-0" />
-                      <div>
-                        <p className="font-semibold">Knowledge Base Warning</p>
-                        <p className="text-xs opacity-80">{ragWarning}</p>
-                      </div>
-                    </div>
-                  )}
-                  <AnalysisResult
-                    result={analysisResult}
-                    onPlayAudio={playAudio}
-                    onStopAudio={stopAudio}
-                    isSpeaking={isSpeaking}
-                    hasAudio={!!audioBuffer}
-                  />
-                   {audioError && (
-                    <div className="mt-4 flex items-center gap-3 rounded-lg border border-red-500/30 bg-red-900/20 p-3 text-sm text-red-400">
-                      <WarningIcon className="h-5 w-5 flex-shrink-0" />
-                      <div>
-                        <p className="font-semibold">Audio Error</p>
-                        <p className="text-xs opacity-80">{audioError}</p>
-                      </div>
-                    </div>
-                  )}
-                  {chatHistory.length > 0 && (
-                    <ChatInterface
-                        history={chatHistory}
-                        message={chatMessage}
-                        onMessageChange={setChatMessage}
-                        onSendMessage={handleSendChatMessage}
-                        isLoading={isChatLoading}
-                    />
-                  )}
-                </>
-              ) : (
-                <div className="text-center text-text-secondary">
-                  <h3 className="text-lg font-semibold">Your analysis will appear here</h3>
-                  <p>Upload a video or image and enter a prompt to get started.</p>
-                </div>
-              )}
-            </div>
+                )}
+                
+                {/* Chat Interface */}
+                <ChatInterface 
+                    history={chatHistory}
+                    message={chatMessage}
+                    onMessageChange={setChatMessage}
+                    onSendMessage={handleSendMessage}
+                    isLoading={isChatLoading}
+                />
+              </div>
+            )}
           </div>
-        )}
-        
-        {activeTab === 'agents' && (
+        ) : (
           <AgentsView
             agents={agents}
-            onSaveAgent={handleSaveAgent}
-            onDeleteAgent={handleDeleteAgent}
+            onSaveAgent={(agent) => {
+              saveAgent(agent);
+              setAgents(getAgents());
+            }}
+            onDeleteAgent={(id) => {
+              deleteAgent(id);
+              setAgents(getAgents());
+            }}
             defaultAgentId={defaultAgentId}
-            onSetDefaultAgent={handleSetDefaultAgent}
+            onSetDefaultAgent={(id) => {
+                setDefaultAgentId(id);
+                setDefaultAgentIdState(id);
+            }}
           />
         )}
       </main>

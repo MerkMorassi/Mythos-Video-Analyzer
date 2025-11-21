@@ -13,17 +13,21 @@ export interface Agent {
 }
 
 const DEFAULT_VOICES = [
-  { name: 'Kore', label: 'Kore (Calm & Clear)' },
-  { name: 'Puck', label: 'Puck (Energetic & Youthful)' },
-  { name: 'Charon', label: 'Charon (Deep & Authoritative)' },
-  { name: 'Fenrir', label: 'Fenrir (Serious & Commanding)' },
-  { name: 'Zephyr', label: 'Zephyr (Warm & Friendly)' },
+  { 
+    name: 'Kore', 
+    label: 'Kore (Calm & Clear)',
+    systemPrompt: 'You are a helpful AI Assistant who is an expert in cinematography, director of photography and SDXL prompt engineering optimization for filmmakers.'
+  },
+  { name: 'Puck', label: 'Puck (Energetic & Youthful)', systemPrompt: '' },
+  { name: 'Charon', label: 'Charon (Deep & Authoritative)', systemPrompt: '' },
+  { name: 'Fenrir', label: 'Fenrir (Serious & Commanding)', systemPrompt: '' },
+  { name: 'Zephyr', label: 'Zephyr (Warm & Friendly)', systemPrompt: '' },
 ];
 
 const defaultAgents: Agent[] = DEFAULT_VOICES.map(voice => ({
   id: `default-${voice.name}`,
   name: voice.label,
-  systemPrompt: '',
+  systemPrompt: voice.systemPrompt,
   voice: voice.name,
   isCustom: false,
   speakingRate: 1.0,
