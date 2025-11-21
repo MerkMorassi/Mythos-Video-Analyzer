@@ -1,5 +1,5 @@
 {
-  "name": "MythOS Video Analyzer",
-  "description": "Upload a video or provide a URL, then use Gemini Pro to analyze its contents based on your prompts. The application extracts keyframes from the video and sends them to the model for detailed visual understanding and analysis.",
+  "name": "Video & Image Analyzer",
+  "description": "Upload a video or image, or provide a URL, then use Gemini to analyze its contents based on your prompts. The application extracts keyframes from videos or uses the uploaded image for detailed visual understanding and analysis.",
   "requestFramePermissions": []
 }

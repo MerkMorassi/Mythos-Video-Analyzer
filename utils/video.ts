@@ -1,13 +1,13 @@
 
-const MAX_FRAMES = 16;
 const FRAME_QUALITY = 0.8; // Jpeg quality
 
 /**
  * Extracts a specified number of frames from a video source.
  * @param videoUrl The URL of the video (can be an object URL for local files).
+ * @param frameCount The number of frames to extract.
  * @returns A promise that resolves to an array of base64 encoded frame strings (without the data URL prefix).
  */
-export const extractFramesFromVideo = (videoUrl: string): Promise<string[]> => {
+export const extractFramesFromVideo = (videoUrl: string, frameCount: number): Promise<string[]> => {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
     video.crossOrigin = 'anonymous'; // Necessary for loading videos from different origins
@@ -25,16 +25,18 @@ export const extractFramesFromVideo = (videoUrl: string): Promise<string[]> => {
       canvas.height = video.videoHeight;
 
       const duration = video.duration;
-      if (duration <= 0) {
-          return reject(new Error("Video has no duration or is invalid."));
+      if (duration <= 0 || !isFinite(duration)) {
+          video.remove();
+          canvas.remove();
+          return reject(new Error("The video file appears to be corrupted or is not a valid video format, as its duration could not be read."));
       }
 
-      const interval = duration / MAX_FRAMES;
+      const interval = duration / frameCount;
       let currentTime = 0;
       let capturedFrames = 0;
 
       const seekAndCapture = () => {
-        if (capturedFrames >= MAX_FRAMES || currentTime > duration) {
+        if (capturedFrames >= frameCount || currentTime > duration) {
           video.remove();
           canvas.remove();
           resolve(frames);
@@ -60,12 +62,12 @@ export const extractFramesFromVideo = (videoUrl: string): Promise<string[]> => {
     });
     
     video.addEventListener('error', (e) => {
-      let errorMsg = 'Unknown video error.';
+      let errorMsg = 'An unknown error occurred while trying to process the video.';
       switch (video.error?.code) {
-        case 1: errorMsg = 'Video loading aborted.'; break;
-        case 2: errorMsg = 'A network error caused video download to fail.'; break;
-        case 3: errorMsg = 'Video playback aborted due to corruption or unsupported feature.'; break;
-        case 4: errorMsg = 'The video could not be loaded, either because the server or network failed or because the format is not supported. Please check CORS policy for URL.'; break;
+        case 1: errorMsg = 'Video loading was aborted.'; break;
+        case 2: errorMsg = 'A network error caused the video download to fail. Please check your connection.'; break;
+        case 3: errorMsg = 'Video playback was aborted. The file might be corrupted or use a format your browser doesn\'t support.'; break;
+        case 4: errorMsg = 'The video could not be loaded. If using a URL, check for CORS issues. If uploading a file, it might be corrupted or in an unsupported format.'; break;
       }
       reject(new Error(errorMsg));
     });

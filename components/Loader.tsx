@@ -1,10 +1,12 @@
+
 import React from 'react';
 
 interface LoaderProps {
   message: string;
+  mediaType: 'video' | 'image';
 }
 
-export const Loader: React.FC<LoaderProps> = ({ message }) => {
+export const Loader: React.FC<LoaderProps> = ({ message, mediaType }) => {
   return (
     <div className="flex flex-col items-center justify-center text-center space-y-4">
       <svg
@@ -28,7 +30,7 @@ export const Loader: React.FC<LoaderProps> = ({ message }) => {
         ></path>
       </svg>
       <div className="text-text-secondary">
-        <p className="font-semibold text-lg">Processing Video...</p>
+        <p className="font-semibold text-lg">Processing {mediaType === 'video' ? 'Video' : 'Image'}...</p>
         <p className="text-sm">{message}</p>
       </div>
     </div>
