@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Modality, GenerateContentConfig, HarmCategory, HarmBlockThreshold, Chat, Content } from "@google/genai";
 
 const API_KEY = process.env.API_KEY;
@@ -52,7 +51,8 @@ export const analyzeVideo = async (prompt: string, frames: string[], systemPromp
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-pro',
+      // FIX: Updated model to `gemini-3-pro-preview` for complex multimodal analysis.
+      model: 'gemini-3-pro-preview',
       contents: { parts: [{ text: fullPrompt(prompt) }, ...imageParts] },
       config,
     });
@@ -91,7 +91,8 @@ export const analyzeImage = async (prompt:string, imageBase64: string, mimeType:
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-pro', // Upgraded for consistency and better performance
+      // FIX: Updated model to `gemini-3-pro-preview` for better performance and consistency.
+      model: 'gemini-3-pro-preview',
       contents: { parts: [{ text: fullPrompt(prompt) }, imagePart] },
       config,
     });
@@ -159,8 +160,35 @@ export const createChat = (systemPrompt?: string, initialHistory?: Content[]): C
     }
 
     return ai.chats.create({
-        model: 'gemini-2.5-pro',
+        // FIX: Updated model to `gemini-3-pro-preview` for chat sessions.
+        model: 'gemini-3-pro-preview',
         history: initialHistory,
         config,
     });
+};
+
+export const generateSdxlPrompt = async (promptWithContext: string): Promise<string> => {
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview', // Use a strong model for creative/instructed text generation
+      contents: { parts: [{ text: promptWithContext }] },
+      config: {
+        maxOutputTokens: 2048, // Generous token limit for detailed prompts
+        safetySettings,
+      },
+    });
+
+    const text = response.text;
+    if (typeof text !== 'string' || !text.trim()) {
+      throw new Error('The model returned an empty or invalid prompt.');
+    }
+    // Clean up the response to remove any preamble or markdown formatting
+    return text.trim();
+  } catch (error) {
+    console.error("Error generating SDXL prompt:", error);
+    if (error instanceof Error) {
+      throw new Error(`Gemini API Error: ${error.message}`);
+    }
+    throw new Error("An unknown error occurred while generating the SDXL prompt.");
+  }
 };

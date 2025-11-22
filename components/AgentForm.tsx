@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useRef } from 'react';
 import { Agent, getAvailableVoices } from '../services/agentService';
 import { UserIcon } from './icons/UserIcon';
@@ -116,7 +115,7 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
 
   return (
     <div className="fixed inset-0 bg-primary/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <form onSubmit={handleSubmit} className="bg-secondary border border-accent rounded-lg p-6 w-full max-w-lg space-y-4 animate-fade-in max-h-[90vh] overflow-y-auto">
+      <form onSubmit={handleSubmit} className="bg-secondary border border-accent rounded-xl p-6 w-full max-w-lg space-y-4 animate-fade-in max-h-[90vh] overflow-y-auto shadow-2xl">
         <h2 className="text-xl font-bold text-text-primary">{agent ? 'Edit Agent' : 'Create New Agent'}</h2>
         
         {formError && (
@@ -143,12 +142,12 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
                     )}
                 </div>
                 <div className="flex items-center gap-2">
-                    <label htmlFor="avatar-upload" className="px-3 py-2 text-xs bg-primary border border-accent rounded-md cursor-pointer hover:bg-accent/50 transition-colors">
+                    <label htmlFor="avatar-upload" className="px-4 py-2 text-sm font-semibold bg-secondary border border-accent text-text-secondary rounded-xl cursor-pointer hover:bg-accent hover:text-text-primary transition-colors">
                         Upload Image
                     </label>
                     <input id="avatar-upload" ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
                     {avatar && (
-                        <button type="button" onClick={handleRemoveAvatar} className="p-2 text-text-secondary hover:text-red-400 transition-colors" aria-label="Remove Avatar">
+                        <button type="button" onClick={handleRemoveAvatar} className="p-2 text-text-secondary hover:text-red-400 rounded-xl hover:bg-red-900/20 transition-colors" aria-label="Remove Avatar">
                             <TrashIcon className="w-4 h-4" />
                         </button>
                     )}
@@ -164,7 +163,7 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g., 'Cinematography Expert'"
-            className="w-full p-2 bg-primary border border-accent rounded-lg focus:ring-2 focus:ring-brand focus:outline-none"
+            className="w-full p-2 bg-primary border border-accent rounded-xl focus:ring-2 focus:ring-brand focus:outline-none"
             required
           />
         </div>
@@ -175,7 +174,7 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
             value={systemPrompt}
             onChange={(e) => setSystemPrompt(e.target.value)}
             placeholder="Define the agent's persona and instructions..."
-            className="w-full h-32 p-2 bg-primary border border-accent rounded-lg focus:ring-2 focus:ring-brand focus:outline-none resize-none"
+            className="w-full h-32 p-2 bg-primary border border-accent rounded-xl focus:ring-2 focus:ring-brand focus:outline-none resize-none"
             required
           />
         </div>
@@ -187,7 +186,7 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
             value={tags}
             onChange={(e) => setTags(e.target.value)}
             placeholder="e.g., cinematography, botany, history"
-            className="w-full p-2 bg-primary border border-accent rounded-lg focus:ring-2 focus:ring-brand focus:outline-none"
+            className="w-full p-2 bg-primary border border-accent rounded-xl focus:ring-2 focus:ring-brand focus:outline-none"
           />
         </div>
          <div>
@@ -198,7 +197,7 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
             value={knowledgeBaseUrl}
             onChange={handleKbUrlChange}
             placeholder="e.g., http://localhost:8000/search"
-            className={`w-full p-2 bg-primary border rounded-lg focus:ring-2 focus:outline-none transition-colors ${
+            className={`w-full p-2 bg-primary border rounded-xl focus:ring-2 focus:outline-none transition-colors ${
               kbUrlError ? 'border-red-500/50 focus:ring-red-500' : 'border-accent focus:ring-brand'
             }`}
           />
@@ -216,7 +215,7 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
             id="agent-voice"
             value={voice}
             onChange={(e) => setVoice(e.target.value)}
-            className="w-full p-2 bg-primary border border-accent rounded-lg focus:ring-2 focus:ring-brand focus:outline-none"
+            className="w-full p-2 bg-primary border border-accent rounded-xl focus:ring-2 focus:ring-brand focus:outline-none"
           >
             {getAvailableVoices().map(v => (
               <option key={v.name} value={v.name}>{v.label}</option>
@@ -256,8 +255,10 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
         </div>
 
         <div className="flex justify-end space-x-3 pt-2">
-          <button type="button" onClick={onCancel} className="px-4 py-2 bg-accent text-text-primary rounded-lg hover:bg-accent/70 transition-colors">Cancel</button>
-          <button type="submit" className="px-4 py-2 bg-brand text-text-primary rounded-lg hover:bg-brand-hover transition-colors">Save Agent</button>
+          <button type="button" onClick={onCancel} className="px-6 py-3 bg-secondary border border-accent text-text-secondary font-semibold rounded-xl hover:bg-accent hover:text-text-primary transition-colors">Cancel</button>
+          <button type="submit" className="px-6 py-3 bg-brand text-text-primary font-semibold rounded-xl hover:bg-brand-hover transition-all shadow-lg hover:shadow-xl active:scale-95">
+            {agent ? 'Update' : 'Save'}
+          </button>
         </div>
       </form>
     </div>

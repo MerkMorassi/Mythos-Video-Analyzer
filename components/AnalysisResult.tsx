@@ -1,7 +1,9 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { SpeakerIcon } from './icons/SpeakerIcon';
 import { SpeakerOffIcon } from './icons/SpeakerOffIcon';
+import { ClipboardIcon } from './icons/ClipboardIcon';
+import { WandIcon } from './icons/WandIcon';
 
 interface AnalysisResultProps {
   result: string;
@@ -11,6 +13,8 @@ interface AnalysisResultProps {
   hasAudio: boolean;
   onGenerateAudio?: () => void;
   isAudioGenerating?: boolean;
+  onReEngineerPrompt: () => void;
+  isReEngineering: boolean;
 }
 
 export const AnalysisResult: React.FC<AnalysisResultProps> = ({
@@ -21,37 +25,68 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({
   hasAudio,
   onGenerateAudio,
   isAudioGenerating,
+  onReEngineerPrompt,
+  isReEngineering,
 }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = result;
+    const text = tempDiv.innerText || tempDiv.textContent || '';
+    
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   return (
-    <div className="w-full h-full flex flex-col mb-6">
+    <div className="w-full h-full flex flex-col">
       <div className="flex justify-between items-center mb-6">
         <h3 className="text-lg font-semibold text-brand-hover">Analysis Result</h3>
         
-        {/* Audio Controls */}
-        <div className="flex items-center">
+        <div className="flex items-center gap-2">
+            <button
+              onClick={handleCopy}
+              className="p-2 rounded-xl hover:bg-accent transition-colors focus:outline-none focus:ring-2 focus:ring-brand flex items-center gap-2 group"
+              title="Copy analysis text"
+            >
+                <ClipboardIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                {copied && <span className="text-xs font-medium text-brand-hover animate-fade-in">Copied!</span>}
+            </button>
+
+            <div className="h-4 w-px bg-accent mx-1"></div>
+
+            <button
+                onClick={onReEngineerPrompt}
+                disabled={isReEngineering}
+                className="p-2 rounded-xl hover:bg-accent transition-colors focus:outline-none focus:ring-2 focus:ring-brand flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Generate an optimized prompt for SDXL based on this analysis"
+            >
+                <WandIcon className="w-5 h-5 text-text-secondary" />
+                <span className="text-xs font-medium text-text-secondary">Generate Prompt</span>
+            </button>
+
+            <div className="h-4 w-px bg-accent mx-1"></div>
+
             {hasAudio ? (
                 <button
                     onClick={isSpeaking ? onStopAudio : onPlayAudio}
-                    className="p-2 rounded-full hover:bg-accent transition-colors focus:outline-none focus:ring-2 focus:ring-brand flex items-center gap-2"
+                    className="p-2 rounded-xl hover:bg-accent transition-colors focus:outline-none focus:ring-2 focus:ring-brand flex items-center gap-2"
                     aria-label={isSpeaking ? 'Stop speech' : 'Read result aloud'}
                 >
                     {isSpeaking ? (
-                        <>
-                            <SpeakerOffIcon className="w-5 h-5 text-brand-hover" />
-                            <span className="text-xs font-medium text-brand-hover">Stop</span>
-                        </>
+                        <><SpeakerOffIcon className="w-5 h-5 text-brand-hover" /><span className="text-xs font-medium text-brand-hover">Stop</span></>
                     ) : (
-                        <>
-                            <SpeakerIcon className="w-5 h-5 text-text-primary" />
-                            <span className="text-xs font-medium text-text-secondary">Read Aloud</span>
-                        </>
+                        <><SpeakerIcon className="w-5 h-5 text-text-primary" /><span className="text-xs font-medium text-text-secondary">Read Aloud</span></>
                     )}
                 </button>
             ) : (
                 <button
                     onClick={onGenerateAudio}
                     disabled={isAudioGenerating}
-                    className="p-2 rounded-full hover:bg-accent transition-colors focus:outline-none focus:ring-2 focus:ring-brand flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="p-2 rounded-xl hover:bg-accent transition-colors focus:outline-none focus:ring-2 focus:ring-brand flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                     aria-label="Generate audio"
                     title="Generate audio for this analysis"
                 >
@@ -69,7 +104,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({
         </div>
       </div>
       <div
-        className="prose prose-invert prose-base max-w-none flex-grow overflow-y-auto bg-primary/50 p-6 rounded-lg prose-headings:text-brand-hover prose-headings:font-semibold prose-headings:mt-8 prose-headings:mb-4 prose-strong:text-text-primary prose-blockquote:border-l-accent prose-li:marker:text-brand leading-relaxed space-y-4 prose-p:my-4"
+        className="prose prose-invert prose-base max-w-none flex-grow overflow-y-auto bg-primary/50 p-6 rounded-lg prose-headings:text-brand-hover prose-headings:font-semibold prose-headings:mt-8 prose-headings:mb-4 prose-strong:text-text-primary prose-blockquote:border-l-accent prose-li:marker:text-brand leading-loose space-y-6 prose-p:my-6"
         dangerouslySetInnerHTML={{ __html: result }}
       />
     </div>
