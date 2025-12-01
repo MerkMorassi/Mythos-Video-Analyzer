@@ -51,8 +51,14 @@ export const getEmbeddings = async (text: string): Promise<number[] | null> => {
 
 export const getAvailableModels = async () => {
   try {
-    const response = await ai.models.list();
-    return response.models || [];
+    // FIX: `ai.models.list()` returns a Pager object which is an async iterable.
+    // The previous implementation was trying to access a `.models` property that does not exist.
+    // We now iterate over the pager to collect all the models.
+    const models = [];
+    for await (const model of ai.models.list()) {
+      models.push(model);
+    }
+    return models;
   } catch (error) {
     console.error("Error fetching models:", error);
     return [];

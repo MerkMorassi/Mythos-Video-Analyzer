@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { vectorDb, VectorRecord } from '../services/vectorDbService';
 import { chunkText, generateEmbeddingsForChunks } from '../services/embeddingService';
@@ -7,6 +6,7 @@ import { DatabaseIcon } from './icons/DatabaseIcon';
 import { TrashIcon } from './icons/TrashIcon';
 import { PaperclipIcon } from './icons/PaperclipIcon';
 import { getAvailableModels } from '../services/geminiService';
+import { UploadIcon } from './icons/UploadIcon';
 
 export const KnowledgeView: React.FC = () => {
     const [vectorCount, setVectorCount] = useState<number>(0);
@@ -16,7 +16,8 @@ export const KnowledgeView: React.FC = () => {
     const [sources, setSources] = useState<string[]>([]);
     const [availableModels, setAvailableModels] = useState<{ displayName: string, name: string }[]>([]);
 
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    const ingestFileInputRef = useRef<HTMLInputElement>(null);
+    const restoreInputRef = useRef<HTMLInputElement>(null);
 
     const refreshStats = async () => {
         const count = await vectorDb.getVectorCount();
@@ -28,13 +29,11 @@ export const KnowledgeView: React.FC = () => {
 
     useEffect(() => {
         refreshStats();
-        // Check for available models on load
         getAvailableModels().then(models => {
-            setAvailableModels(models);
+            setAvailableModels(models.filter(m => m.name.includes('gemini'))); // Basic filter
         }).catch(err => console.error("Failed to fetch models", err));
     }, []);
 
-    // Helper to extract text from arbitrary JSON
     const processJsonContent = (json: any): string => {
         if (typeof json === 'string') return json;
         if (typeof json === 'number' || typeof json === 'boolean') return String(json);
@@ -63,27 +62,22 @@ export const KnowledgeView: React.FC = () => {
                 setStatusMessage(`Processing ${file.name} (${i + 1}/${totalFiles})...`);
                 
                 const rawText = await file.text();
-                // Basic check for empty or non-text files
                 if (!rawText.trim()) continue;
 
                 let textToChunk = rawText;
                 let isVectorBackup = false;
 
-                // SPECIAL HANDLING FOR JSON
                 if (file.name.toLowerCase().endsWith('.json')) {
                     try {
                         const jsonData = JSON.parse(rawText);
                         
-                        // Check if this is a DB Backup (Array of VectorRecords)
-                        // A simple heuristic: check if the first item has 'vector' and 'text' keys
                         if (Array.isArray(jsonData) && jsonData.length > 0 && 'vector' in jsonData[0] && 'text' in jsonData[0]) {
                              setStatusMessage(`Restoring Vector Backup from ${file.name}...`);
                              const records = jsonData as VectorRecord[];
                              await vectorDb.addVectors(records);
                              TELEPORTER.rebuildIndex(records);
-                             isVectorBackup = true; // Skip embedding
+                             isVectorBackup = true;
                         } else {
-                            // Treat as structured data source - flatten to text
                             setStatusMessage(`Parsing structured data from ${file.name}...`);
                             textToChunk = processJsonContent(jsonData);
                         }
@@ -95,13 +89,11 @@ export const KnowledgeView: React.FC = () => {
 
                 if (isVectorBackup) {
                     setProgress(((i + 1) / totalFiles) * 100);
-                    continue; // Skip the chunking/embedding pipeline
+                    continue;
                 }
 
                 const chunks = chunkText(textToChunk);
-                
                 setStatusMessage(`Embedding ${chunks.length} segments from ${file.name}...`);
-                
                 const embeddedChunks = await generateEmbeddingsForChunks(chunks);
                 
                 const records: VectorRecord[] = embeddedChunks.map(ec => ({
@@ -114,7 +106,7 @@ export const KnowledgeView: React.FC = () => {
                 
                 if (records.length > 0) {
                     await vectorDb.addVectors(records);
-                    TELEPORTER.rebuildIndex(records); 
+                    TELEPORTER.rebuildIndex((await vectorDb.getAllVectors())); 
                 }
                 
                 setProgress(((i + 1) / totalFiles) * 100);
@@ -131,7 +123,7 @@ export const KnowledgeView: React.FC = () => {
             setStatusMessage('Error during ingestion. Check console.');
             setIsIngesting(false);
         } finally {
-             if (fileInputRef.current) fileInputRef.current.value = '';
+             if (e.target) e.target.value = '';
         }
     };
 
@@ -158,6 +150,9 @@ export const KnowledgeView: React.FC = () => {
         URL.revokeObjectURL(url);
     };
 
+    const proModel = availableModels.find(m => m.name.includes('pro'));
+    const flashModel = availableModels.find(m => m.name.includes('flash'));
+
     return (
         <div className="space-y-8 animate-fade-in">
              <div className="flex justify-between items-start">
@@ -174,35 +169,33 @@ export const KnowledgeView: React.FC = () => {
                 </div>
             </div>
 
-            {/* System Status - Models */}
-             <div className="bg-secondary/20 border border-accent rounded-xl p-4 flex items-center justify-between text-xs">
+            <div className="bg-secondary/20 border border-accent rounded-xl p-4 flex items-center justify-between text-xs">
                  <span className="font-semibold text-text-secondary">System Status:</span>
                  <div className="flex gap-4">
                      <span className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                        <span className="text-text-primary">Reasoning: Gemini 3.0 Pro</span>
+                        <span className={`w-2 h-2 rounded-full ${proModel ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                        <span className="text-text-primary">Reasoning: {proModel ? proModel.displayName : 'Not Found'}</span>
                      </span>
                      <span className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-                        <span className="text-text-primary">Fast: Gemini 2.5 Flash</span>
+                        <span className={`w-2 h-2 rounded-full ${flashModel ? 'bg-blue-500' : 'bg-red-500'}`}></span>
+                        <span className="text-text-primary">Fast: {flashModel ? flashModel.displayName : 'Not Found'}</span>
                      </span>
                  </div>
              </div>
 
-            {/* Ingestion Area */}
             <div className="bg-secondary/30 border border-accent rounded-xl p-6 shadow-sm">
                 <h3 className="text-lg font-semibold text-text-primary mb-4">Ingest Data</h3>
                 <div className="border-2 border-dashed border-accent rounded-xl p-8 flex flex-col items-center justify-center text-center transition-colors hover:bg-secondary/50">
                     <input 
                         type="file" 
-                        ref={fileInputRef}
+                        ref={ingestFileInputRef}
                         multiple 
                         accept=".txt,.md,.json,.csv" 
                         onChange={handleFileSelect} 
                         className="hidden" 
                     />
                     <button 
-                        onClick={() => !isIngesting && fileInputRef.current?.click()}
+                        onClick={() => !isIngesting && ingestFileInputRef.current?.click()}
                         disabled={isIngesting}
                         className="flex flex-col items-center gap-2 group cursor-pointer disabled:cursor-wait"
                     >
@@ -232,7 +225,6 @@ export const KnowledgeView: React.FC = () => {
                 )}
             </div>
 
-            {/* Stats & Management */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-secondary/30 border border-accent rounded-xl p-6">
                     <h3 className="text-lg font-semibold text-text-primary mb-4">Active Sources</h3>
@@ -255,18 +247,31 @@ export const KnowledgeView: React.FC = () => {
                         <p className="text-sm text-text-secondary">Manage the local IndexedDB storage.</p>
                      </div>
                      
-                     <div className="space-y-3 mt-4">
+                     <div className="grid grid-cols-2 gap-3 mt-4">
+                        <input
+                            type="file"
+                            ref={restoreInputRef}
+                            accept=".json"
+                            className="hidden"
+                            onChange={handleFileSelect}
+                        />
+                         <button 
+                            onClick={() => restoreInputRef.current?.click()}
+                            className="w-full py-3 border border-accent bg-primary text-text-secondary hover:text-text-primary hover:bg-secondary rounded-xl flex items-center justify-center gap-2 transition-colors"
+                        >
+                            <UploadIcon className="w-4 h-4" />
+                            Import (JSON)
+                        </button>
                         <button 
                             onClick={handleExportBackup}
                             className="w-full py-3 border border-accent bg-primary text-text-secondary hover:text-text-primary hover:bg-secondary rounded-xl flex items-center justify-center gap-2 transition-colors"
                         >
                             <DatabaseIcon className="w-4 h-4" />
-                            Export Knowledge Base (JSON)
+                            Export (JSON)
                         </button>
-
                         <button 
                             onClick={handlePurge}
-                            className="w-full py-3 border border-red-900/50 text-red-400 bg-red-900/10 hover:bg-red-900/20 rounded-xl flex items-center justify-center gap-2 transition-colors"
+                            className="w-full py-3 border border-red-900/50 text-red-400 bg-red-900/10 hover:bg-red-900/20 rounded-xl flex items-center justify-center gap-2 transition-colors col-span-2"
                         >
                             <TrashIcon className="w-4 h-4" />
                             Purge Knowledge Base
