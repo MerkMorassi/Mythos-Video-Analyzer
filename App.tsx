@@ -1,18 +1,16 @@
 
-
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { MediaInput } from './components/MediaInput';
 import { AnalysisResult } from './components/AnalysisResult';
 import { Loader } from './components/Loader';
-import { analyzeVideo, analyzeImage, generateSpeech, createChat, generateSdxlPrompt } from './services/geminiService';
+import { analyzeVideo, analyzeImage, generateSpeech, createChat, generateSdxlPrompt, getEmbeddings } from './services/geminiService';
 import { extractFramesFromVideo } from './utils/video';
 import { decode, decodeAudioData } from './utils/audio';
 import { FramePreview } from './components/FramePreview';
 import { WarningIcon } from './components/icons/WarningIcon';
-import { getAgents, Agent, getDefaultAgentId, setDefaultAgentId, saveAgent, deleteAgent, resetAgentsToDefault } from './services/agentService';
-import { AgentsView } from './components/AgentsView';
+import { getAgent, saveAgent, Agent } from './services/agentService';
+import { AgentForm } from './components/AgentForm';
 import { AnalyzerIcon } from './components/icons/AnalyzerIcon';
-import { AgentsIcon } from './components/icons/AgentsIcon';
 import { Chat, Part, Content } from '@google/genai';
 import { ChatInterface } from './components/ChatInterface';
 import { DatabaseIcon } from './components/icons/DatabaseIcon';
@@ -22,6 +20,13 @@ import { BookmarkIcon } from './components/icons/BookmarkIcon';
 import { PromptTemplatesView } from './components/PromptTemplatesView';
 import { getDefaultPromptTemplate } from './services/promptTemplateService';
 import { ReEngineeredPrompt, ReEngineeredPromptLoader } from './components/ReEngineeredPrompt';
+import { fetchKnowledgeBaseContext } from './services/ragService';
+import { KnowledgeBaseContext } from './components/KnowledgeBaseContext';
+import { KnowledgeView } from './components/KnowledgeView';
+import { vectorDb } from './services/vectorDbService';
+import { TELEPORTER } from './utils/numMarkX';
+import { cosineSimilarity } from './services/embeddingService';
+import { PencilIcon } from './components/icons/PencilIcon';
 
 
 const fileToBase64 = (file: File): Promise<string> =>
@@ -31,37 +36,6 @@ const fileToBase64 = (file: File): Promise<string> =>
     reader.onload = () => resolve((reader.result as string).split(',')[1]);
     reader.onerror = (error) => reject(error);
   });
-
-const fetchKnowledgeBaseContext = async (url: string, query: string): Promise<{context: string; warning: string | null}> => {
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query }),
-        });
-        if (!response.ok) {
-            const warning = `Knowledge base at ${url} returned status ${response.status}.`;
-            console.warn(warning);
-            return { context: '', warning };
-        }
-        const data = await response.json();
-        if (data.results && Array.isArray(data.results) && data.results.length > 0) {
-            const contextString = data.results.join('\n- ');
-            const context = `Context from knowledge base:\n- ${contextString}\n\n`;
-            
-            if (contextString.length < 50) {
-                return { context, warning: "The retrieved context from the Knowledge Base was very brief. You may want to refine your Knowledge Base content or the prompt." };
-            }
-
-            return { context, warning: null };
-        }
-        return { context: '', warning: null }; 
-    } catch (error) {
-        console.error(`Error fetching from knowledge base at ${url}:`, error);
-        const warning = `Could not connect to the knowledge base at ${url}. Proceeding with standard analysis.`;
-        return { context: '', warning };
-    }
-};
 
 interface Suggestion {
   label: string;
@@ -99,7 +73,6 @@ export default function App() {
   const [mediaSource, setMediaSource] = useState<File | string | null>(null);
   const [mediaType, setMediaType] = useState<'video' | 'image'>('video');
   const [prompt, setPrompt] = useState<string>('');
-  const [systemPrompt, setSystemPrompt] = useState<string>('');
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [progressMessage, setProgressMessage] = useState<string>('');
@@ -113,9 +86,11 @@ export default function App() {
   const [playAudioOnLoad, setPlayAudioOnLoad] = useState<boolean>(false);
   const [clearKey, setClearKey] = useState<number>(0);
   
-  const [activeTab, setActiveTab] = useState<'analyzer' | 'agents' | 'templates'>('analyzer');
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [defaultAgentId, setDefaultAgentIdState] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'analyzer' | 'templates' | 'knowledge'>('analyzer');
+  
+  // Single Agent State
+  const [agent, setAgent] = useState<Agent>(getAgent());
+  const [isAgentSettingsOpen, setIsAgentSettingsOpen] = useState(false);
   
   const [chatSession, setChatSession] = useState<Chat | null>(null);
   const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'model'; parts: ChatMessagePart[] }[]>([]);
@@ -125,12 +100,26 @@ export default function App() {
 
   const [isReEngineering, setIsReEngineering] = useState<boolean>(false);
   const [reEngineeredPrompt, setReEngineeredPrompt] = useState<string | null>(null);
+  const [retrievedContext, setRetrievedContext] = useState<string | null>(null);
 
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const scrollTriggerRef = useRef<HTMLDivElement>(null);
+
+  // Initialize Local RAG System
+  useEffect(() => {
+      const initRag = async () => {
+          try {
+              const allVectors = await vectorDb.getAllVectors();
+              TELEPORTER.rebuildIndex(allVectors);
+          } catch (e) {
+              console.error("Failed to initialize local RAG index:", e);
+          }
+      };
+      initRag();
+  }, []);
 
   useEffect(() => {
     if (chatHistory.length > 0 || isChatLoading) {
@@ -157,30 +146,14 @@ export default function App() {
 
     return () => observer.disconnect();
   }, [analysisResult, isChatVisible]);
-  
-  const refreshAgents = useCallback(() => {
-    const loadedAgents = getAgents();
-    setAgents(loadedAgents);
 
-    let currentDefaultId = getDefaultAgentId();
-    if (!currentDefaultId || !loadedAgents.some(a => a.id === currentDefaultId)) {
-        currentDefaultId = loadedAgents.length > 0 ? loadedAgents[0].id : null;
-        if(currentDefaultId) setDefaultAgentId(currentDefaultId);
-    }
-    setDefaultAgentIdState(currentDefaultId);
+  const refreshAgent = useCallback(() => {
+    setAgent(getAgent());
   }, []);
 
   useEffect(() => {
-    refreshAgents();
-  }, [refreshAgents]);
-
-  const activeAgent = agents.find(a => a.id === defaultAgentId) || agents[0];
-
-  useEffect(() => {
-    if (activeAgent) {
-      setSystemPrompt(activeAgent.systemPrompt);
-    }
-  }, [activeAgent]);
+    refreshAgent();
+  }, [refreshAgent]);
 
   const getAudioContext = () => {
     if (!audioContextRef.current) {
@@ -227,6 +200,7 @@ export default function App() {
     setError(null);
     setAudioError(null);
     setRagWarning(null);
+    setRetrievedContext(null);
     setExtractedFrames([]);
     setAudioBuffer(null);
     setIsAudioGenerating(false);
@@ -248,6 +222,7 @@ export default function App() {
     setError(null);
     setAudioError(null);
     setRagWarning(null);
+    setRetrievedContext(null);
     setExtractedFrames([]);
     setAudioBuffer(null);
     setIsAudioGenerating(false);
@@ -261,14 +236,14 @@ export default function App() {
   }, [stopAudio]);
 
   const handleGenerateAudio = async (textToSpeak: string) => {
-    if (!activeAgent?.voice) return;
+    if (!agent?.voice) return;
 
     setIsAudioGenerating(true);
     setAudioError(null);
 
     try {
         const plainText = textToSpeak.replace(/<[^>]*>/g, '');
-        const audioData = await generateSpeech(plainText, activeAgent.voice, activeAgent.speakingRate || 1.0);
+        const audioData = await generateSpeech(plainText, agent.voice, agent.speakingRate || 1.0);
         const audioBytes = decode(audioData);
         const audioCtx = getAudioContext();
         const buffer = await decodeAudioData(audioBytes, audioCtx, 24000, 1);
@@ -284,8 +259,8 @@ export default function App() {
   };
 
   const handleAnalyzeClick = async () => {
-    if (!mediaSource || !prompt.trim() || !activeAgent) {
-      setError(mediaSource && prompt.trim() ? 'No default agent selected.' : `Please select a ${mediaType} and provide an analysis prompt.`);
+    if (!mediaSource || !prompt.trim() || !agent) {
+      setError(mediaSource && prompt.trim() ? 'Agent configuration error.' : `Please select a ${mediaType} and provide an analysis prompt.`);
       return;
     }
     setIsLoading(true);
@@ -293,6 +268,7 @@ export default function App() {
     setError(null);
     setAudioError(null);
     setRagWarning(null);
+    setRetrievedContext(null);
     setExtractedFrames([]);
     stopAudio();
     setAudioBuffer(null);
@@ -305,15 +281,81 @@ export default function App() {
     setReEngineeredPrompt(null);
     setIsReEngineering(false);
 
-    const finalSystemPrompt = activeAgent.systemPrompt;
+    const finalSystemPrompt = agent.systemPrompt;
     let analysisPrompt = prompt;
+    let localContextParts: string[] = [];
+    let externalContextParts: string[] = [];
 
     try {
-      if (activeAgent.knowledgeBaseUrl) {
-        setProgressMessage('Searching knowledge base...');
-        const { context, warning } = await fetchKnowledgeBaseContext(activeAgent.knowledgeBaseUrl, prompt);
+      // 1. External RAG
+      if (agent.knowledgeBaseUrl) {
+        setProgressMessage('Searching external knowledge base...');
+        const { context, warning } = await fetchKnowledgeBaseContext(agent.knowledgeBaseUrl, prompt);
         if (warning) setRagWarning(warning);
-        if (context) analysisPrompt = `Context from Knowledge Base:\n${context}\n\nUser Prompt: ${prompt}`;
+        if (context) {
+            externalContextParts.push(`--- EXTERNAL KNOWLEDGE ---\n${context}`);
+        }
+      }
+
+      // 2. Local RAG (Hybrid: Teleport + Vectors)
+      if (agent.enableLocalRag) {
+          setProgressMessage('Consulting Mythos Vault (Local Memory)...');
+          try {
+              const allVectors = await vectorDb.getAllVectors();
+              
+              // A. Teleporter (O(1) Keyword Match)
+              const directHitsIds = TELEPORTER.teleport(prompt);
+              if (directHitsIds && directHitsIds.length > 0) {
+                  const directDocs = allVectors.filter(v => directHitsIds.includes(v.id));
+                  if (directDocs.length > 0) {
+                       const text = directDocs.map(d => d.text).join('\n\n');
+                       localContextParts.push(`=== EXACT COORDINATE MATCHES (Teleport) ===\n${text}`);
+                  }
+              }
+
+              // B. Vector Resonance
+              if (allVectors.length > 0) {
+                  const queryEmbedding = await getEmbeddings(prompt);
+                  if (queryEmbedding) {
+                      const scored = allVectors.map(v => ({ ...v, score: cosineSimilarity(queryEmbedding, v.vector) }));
+                      const topMatches = scored.sort((a, b) => b.score - a.score)
+                                             .slice(0, 5)
+                                             .filter(v => v.score > 0.45); // Threshold
+                      
+                      if (topMatches.length > 0) {
+                          const text = topMatches.map(m => m.text).join('\n\n');
+                          localContextParts.push(`=== RESONANT MATCHES (Vector Search) ===\n${text}`);
+                      }
+                  }
+              }
+          } catch (e) {
+              console.error("Local RAG failed:", e);
+          }
+      }
+
+      // Combine Contexts with Hybrid Memory Stream Structure
+      const hasContext = localContextParts.length > 0 || externalContextParts.length > 0;
+      
+      if (hasContext) {
+          const localContextBlock = localContextParts.join('\n\n');
+          const externalContextBlock = externalContextParts.join('\n\n');
+          
+          analysisPrompt = `
+          HYBRID MEMORY STREAM:
+          
+          ${localContextBlock ? localContextBlock : '(No local matches found)'}
+          
+          ${externalContextBlock ? externalContextBlock : ''}
+          
+          USER QUERY: ${prompt}
+          
+          INSTRUCTIONS:
+          1. Prioritize EXACT COORDINATE MATCHES (Teleport) for facts/code/specifics. 
+          2. Use RESONANT MATCHES for nuance/context.
+          3. If External Knowledge is provided, use it to supplement the Local Memory.
+          4. Ground your analysis strictly in this provided context where applicable.`;
+          
+          setRetrievedContext(`${localContextBlock}\n\n${externalContextBlock}`.trim());
       }
 
       let resultText = '';
@@ -365,7 +407,7 @@ export default function App() {
       setChatSession(newChat);
       setChatHistory([]); 
 
-      if (activeAgent.voice && activeAgent.autoPlayAudio) {
+      if (agent.voice && agent.autoPlayAudio) {
           handleGenerateAudio(resultText);
       }
 
@@ -442,6 +484,18 @@ export default function App() {
         setIsReEngineering(false);
     }
   };
+  
+  const handleSaveAgentSettings = (updatedAgent: Omit<Agent, 'id' | 'isCustom'> & { id?: string }) => {
+     // Even though the form passes partials, we merge with existing ID since we are single-agent
+     const newAgentData: Agent = {
+         ...agent, // keep existing id
+         ...updatedAgent,
+         id: agent.id // ensure ID doesn't change
+     };
+     saveAgent(newAgentData);
+     setAgent(newAgentData);
+     setIsAgentSettingsOpen(false);
+  };
 
   return (
     <div className="min-h-screen bg-primary text-text-primary font-sans selection:bg-brand selection:text-white">
@@ -451,9 +505,9 @@ export default function App() {
             <AnalyzerIcon className="w-5 h-5" /> Analyzer
             {activeTab === 'analyzer' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand animate-fade-in"></span>}
           </button>
-          <button onClick={() => setActiveTab('agents')} className={`flex-1 py-4 text-sm font-semibold flex items-center justify-center gap-2 transition-colors relative ${activeTab === 'agents' ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
-            <AgentsIcon className="w-5 h-5" /> Agents
-            {activeTab === 'agents' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand animate-fade-in"></span>}
+          <button onClick={() => setActiveTab('knowledge')} className={`flex-1 py-4 text-sm font-semibold flex items-center justify-center gap-2 transition-colors relative ${activeTab === 'knowledge' ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+            <DatabaseIcon className="w-5 h-5" /> Knowledge
+            {activeTab === 'knowledge' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand animate-fade-in"></span>}
           </button>
           <button onClick={() => setActiveTab('templates')} className={`flex-1 py-4 text-sm font-semibold flex items-center justify-center gap-2 transition-colors relative ${activeTab === 'templates' ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
             <BookmarkIcon className="w-5 h-5" /> Templates
@@ -466,21 +520,28 @@ export default function App() {
         {activeTab === 'analyzer' ? (
           <div className="flex flex-col space-y-8 animate-fade-in">
             <div className="text-center space-y-3">
-               <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-text-secondary">AI Media Analyzer</h1>
+               <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-text-secondary">Media Analysis Agent</h1>
               <p className="text-text-secondary text-sm">Upload media for detailed cinematography & visual analysis.</p>
-              {activeAgent && (
-                 <div className="flex justify-center">
-                    <div className="flex items-center gap-2 bg-secondary/50 border border-accent rounded-full px-3 py-1">
-                        {activeAgent.avatar ? <img src={activeAgent.avatar} alt={activeAgent.name} className="w-5 h-5 rounded-full object-cover" /> : <UserIcon className="w-4 h-4 text-text-secondary"/>}
-                        <span className="text-xs font-medium text-text-primary">{activeAgent.name}</span>
-                        {activeAgent.knowledgeBaseUrl && (
-                            <div className="flex items-center gap-1 pl-2 border-l border-accent/50 text-brand-hover" title="Knowledge Base Active (RAG)">
-                                <DatabaseIcon className="w-3 h-3" /><span className="text-[10px] font-bold uppercase tracking-wider">RAG</span>
-                            </div>
-                        )}
-                    </div>
-                 </div>
-              )}
+              
+               <div className="flex justify-center">
+                  <div className="flex items-center gap-2 bg-secondary/50 border border-accent rounded-full pl-3 pr-1 py-1 group hover:border-brand/50 transition-colors">
+                      {agent.avatar ? <img src={agent.avatar} alt={agent.name} className="w-5 h-5 rounded-full object-cover" /> : <UserIcon className="w-4 h-4 text-text-secondary"/>}
+                      <span className="text-xs font-medium text-text-primary">{agent.name}</span>
+                      {(agent.knowledgeBaseUrl || agent.enableLocalRag) && (
+                          <div className="flex items-center gap-1 pl-2 border-l border-accent/50 text-brand-hover" title={agent.enableLocalRag ? "Local & Remote RAG" : "Remote RAG Only"}>
+                              <DatabaseIcon className="w-3 h-3" /><span className="text-[10px] font-bold uppercase tracking-wider">RAG</span>
+                          </div>
+                      )}
+                      <button 
+                        onClick={() => setIsAgentSettingsOpen(true)}
+                        className="ml-2 p-1.5 rounded-full hover:bg-accent text-text-secondary hover:text-white transition-colors"
+                        title="Configure Agent Persona"
+                      >
+                          <PencilIcon className="w-3 h-3" />
+                      </button>
+                  </div>
+               </div>
+
             </div>
 
             <div className="bg-secondary/30 p-6 rounded-xl border border-accent shadow-sm">
@@ -507,22 +568,20 @@ export default function App() {
               </div>
             </div>
 
-            {(error || audioError || ragWarning) && (
-                <div className="space-y-3">
-                    {error && <div className="p-4 bg-red-900/20 border border-red-500/30 rounded-xl flex items-start gap-3 text-red-200 animate-fade-in"><WarningIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><p className="text-sm">{error}</p></div>}
-                    {ragWarning && <div className="p-4 bg-yellow-900/20 border border-yellow-500/30 rounded-xl flex items-start gap-3 text-yellow-200 animate-fade-in"><WarningIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><p className="text-sm">{ragWarning}</p></div>}
-                    {audioError && <div className="p-4 bg-orange-900/20 border border-orange-500/30 rounded-xl flex items-start gap-3 text-orange-200 animate-fade-in"><WarningIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><p className="text-sm">{audioError}</p></div>}
-                </div>
-            )}
-
+            {error && <div className="p-4 bg-red-900/20 border border-red-500/30 rounded-xl flex items-start gap-3 text-red-200 animate-fade-in"><WarningIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><p className="text-sm">{error}</p></div>}
+            {audioError && <div className="p-4 bg-orange-900/20 border border-orange-500/30 rounded-xl flex items-start gap-3 text-orange-200 animate-fade-in"><WarningIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><p className="text-sm">{audioError}</p></div>}
+            
             {isLoading && <div className="py-12 animate-fade-in"><Loader message={progressMessage} mediaType={mediaType} /></div>}
 
-            {!isLoading && (analysisResult || extractedFrames.length > 0) && (
+            {!isLoading && (analysisResult || extractedFrames.length > 0 || retrievedContext) && (
               <div className="space-y-8 animate-fade-in">
-                <div className="border-t border-accent pt-8"><FramePreview frames={extractedFrames} title={mediaType === 'video' ? 'Extracted Keyframes' : 'Analyzed Image'} /></div>
-                
+                {retrievedContext && (agent.knowledgeBaseUrl || agent.enableLocalRag) && (
+                    <KnowledgeBaseContext context={retrievedContext} warning={ragWarning} url={agent.knowledgeBaseUrl || 'Mythos Vault (Local)'} />
+                )}
+
                 {analysisResult && (
                   <>
+                    <div className="border-t border-accent pt-8"><FramePreview frames={extractedFrames} title={mediaType === 'video' ? 'Extracted Keyframes' : 'Analyzed Image'} /></div>
                     <div className="bg-secondary/30 border border-accent rounded-xl p-6 shadow-sm">
                        <AnalysisResult result={analysisResult} onPlayAudio={playAudio} onStopAudio={stopAudio} isSpeaking={isSpeaking} hasAudio={!!audioBuffer} onGenerateAudio={() => handleGenerateAudio(analysisResult)} isAudioGenerating={isAudioGenerating} onReEngineerPrompt={handleReEngineerPrompt} isReEngineering={isReEngineering} />
                     </div>
@@ -532,7 +591,7 @@ export default function App() {
 
                     <div ref={scrollTriggerRef} className="h-1" />
                     
-                    {chatHistory.map((msg, index) => <ChatMessage key={index} message={msg} agent={activeAgent} />)}
+                    {chatHistory.map((msg, index) => <ChatMessage key={index} message={msg} agent={agent} />)}
                     
                     {isChatLoading && (
                        <div className="flex justify-start">
@@ -552,9 +611,18 @@ export default function App() {
                 )}
               </div>
             )}
+            
+            {isAgentSettingsOpen && (
+                <AgentForm 
+                    agent={agent}
+                    onSave={handleSaveAgentSettings}
+                    onCancel={() => setIsAgentSettingsOpen(false)}
+                />
+            )}
+            
           </div>
-        ) : activeTab === 'agents' ? (
-          <AgentsView agents={agents} onSaveAgent={(agent) => { saveAgent(agent); refreshAgents(); }} onDeleteAgent={(id) => { deleteAgent(id); refreshAgents(); }} onResetAgents={() => { resetAgentsToDefault(); refreshAgents(); }} defaultAgentId={defaultAgentId} onSetDefaultAgent={(id) => { setDefaultAgentId(id); setDefaultAgentIdState(id); }} />
+        ) : activeTab === 'knowledge' ? (
+           <KnowledgeView />
         ) : (
            <PromptTemplatesView />
         )}

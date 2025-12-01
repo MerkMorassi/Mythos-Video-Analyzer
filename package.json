@@ -1,5 +1,5 @@
 {
-  "name": "video-&-image-analyzer",
+  "name": "media-analysis-agent",
   "private": true,
   "version": "0.0.0",
   "type": "module",

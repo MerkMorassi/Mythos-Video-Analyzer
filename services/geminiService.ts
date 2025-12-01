@@ -2,125 +2,119 @@ import { GoogleGenAI, Modality, GenerateContentConfig, HarmCategory, HarmBlockTh
 
 const API_KEY = process.env.API_KEY;
 if (!API_KEY) {
-  // In a real app, you'd handle this more gracefully.
-  // For this environment, we assume the key is always present.
   console.warn("API_KEY environment variable not set.");
 }
 
 const ai = new GoogleGenAI({ apiKey: API_KEY! });
 
 const safetySettings = [
-    // These settings are quite permissive. In a real application, you'd want to
-    // tailor them to your specific use case and safety requirements.
-    {
-        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-    },
-    {
-        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-    },
-    {
-        category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-    },
-    {
-        category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        threshold: HarmBlockThreshold.BLOCK_NONE,
-    },
+    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
 const fullPrompt = (prompt: string) => `${prompt}. IMPORTANT: Format the entire response as clean, well-structured, semantic HTML. Use only standard tags like <p>, <h1>, <ul>, <li>, etc. Do not include any inline styles, <style> blocks, or color attributes. The styling is handled by the application's CSS.`;
 
+// --- MGP: Model Gate Protocol ---
+const HIGH_REASONING_TRIGGERS = [
+    'synthesize', 'deeply', 'complex analysis', 'tragedy', 
+    'profound', 'critical assessment', 'architectural plan', 'paradigm shift',
+    'visualize', 'image analysis', 'music analysis', 'video analysis', 'reverse engineer'
+];
+
+export const getModelForTask = (queryText: string): string => {
+    const lowQuery = queryText.toLowerCase();
+    const isHighReasoning = HIGH_REASONING_TRIGGERS.some(word => lowQuery.includes(word));
+    
+    if (isHighReasoning) {
+        // console.log("[MGP] High Reasoning task detected. Promoting to Pro.");
+        return 'gemini-3-pro-preview';
+    }
+    // console.log("[MGP] Standard task detected. Using Flash.");
+    return 'gemini-2.5-flash';
+};
+
+// --- Embeddings ---
+export const getEmbeddings = async (text: string): Promise<number[] | null> => {
+    try {
+        const response = await ai.models.embedContent({
+            model: 'text-embedding-004',
+            contents: { parts: [{ text }] }
+        });
+        return response.embeddings?.[0]?.values || null;
+    } catch (error) {
+        console.error("Error generating embedding:", error);
+        return null;
+    }
+};
+
+export const getAvailableModels = async () => {
+  try {
+    const response = await ai.models.list();
+    return response.models || [];
+  } catch (error) {
+    console.error("Error fetching models:", error);
+    return [];
+  }
+};
+
 export const analyzeVideo = async (prompt: string, frames: string[], systemPrompt?: string): Promise<string> => {
   const imageParts = frames.map(base64Data => ({
-    inlineData: {
-      data: base64Data,
-      mimeType: 'image/jpeg',
-    },
+    inlineData: { data: base64Data, mimeType: 'image/jpeg' },
   }));
 
-  const config: GenerateContentConfig = {
-    maxOutputTokens: 8192,
-    safetySettings,
-  };
-
-  if (systemPrompt && systemPrompt.trim()) {
-    config.systemInstruction = systemPrompt;
-  }
+  const config: GenerateContentConfig = { maxOutputTokens: 8192, safetySettings };
+  if (systemPrompt && systemPrompt.trim()) config.systemInstruction = systemPrompt;
+  
+  // Video Analysis usually implies high complexity, so we default to checking MGP but bias towards Pro for video
+  const model = getModelForTask(prompt + " video analysis"); 
 
   try {
     const response = await ai.models.generateContent({
-      // FIX: Updated model to `gemini-3-pro-preview` for complex multimodal analysis.
-      model: 'gemini-3-pro-preview',
+      model: model,
       contents: { parts: [{ text: fullPrompt(prompt) }, ...imageParts] },
       config,
     });
     
     const text = response.text;
-    if (typeof text !== 'string' || !text.trim()) {
-        throw new Error('The model returned an empty or invalid response.');
-    }
+    if (typeof text !== 'string' || !text.trim()) throw new Error('The model returned an empty or invalid response.');
     return text;
-
   } catch (error) {
     console.error("Error analyzing video:", error);
-    if (error instanceof Error) {
-        throw new Error(`Gemini API Error: ${error.message}`);
-    }
-    throw new Error("An unknown error occurred while calling the Gemini API.");
+    throw error instanceof Error ? new Error(`Gemini API Error: ${error.message}`) : new Error("Unknown error during video analysis");
   }
 };
 
-export const analyzeImage = async (prompt:string, imageBase64: string, mimeType: string, systemPrompt?: string): Promise<string> => {
-  const imagePart = {
-    inlineData: {
-      data: imageBase64,
-      mimeType: mimeType,
-    },
-  };
+export const analyzeImage = async (prompt: string, imageBase64: string, mimeType: string, systemPrompt?: string): Promise<string> => {
+  const imagePart = { inlineData: { data: imageBase64, mimeType: mimeType } };
+  const config: GenerateContentConfig = { maxOutputTokens: 8192, safetySettings };
+  if (systemPrompt && systemPrompt.trim()) config.systemInstruction = systemPrompt;
 
-  const config: GenerateContentConfig = {
-    maxOutputTokens: 8192,
-    safetySettings,
-  };
-
-  if (systemPrompt && systemPrompt.trim()) {
-    config.systemInstruction = systemPrompt;
-  }
+  const model = getModelForTask(prompt + " image analysis");
 
   try {
     const response = await ai.models.generateContent({
-      // FIX: Updated model to `gemini-3-pro-preview` for better performance and consistency.
-      model: 'gemini-3-pro-preview',
+      model: model,
       contents: { parts: [{ text: fullPrompt(prompt) }, imagePart] },
       config,
     });
     
     const text = response.text;
-    if (typeof text !== 'string' || !text.trim()) {
-        throw new Error('The model returned an empty or invalid response.');
-    }
+    if (typeof text !== 'string' || !text.trim()) throw new Error('The model returned an empty or invalid response.');
     return text;
-
   } catch (error) {
     console.error("Error analyzing image:", error);
-    if (error instanceof Error) {
-        throw new Error(`Gemini API Error: ${error.message}`);
-    }
-    throw new Error("An unknown error occurred while calling the Gemini API.");
+    throw error instanceof Error ? new Error(`Gemini API Error: ${error.message}`) : new Error("Unknown error during image analysis");
   }
 };
-
 
 export const generateSpeech = async (text: string, voice: string, speakingRate: number): Promise<string> => {
   try {
     const config = {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: voice },
-          },
+          voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } },
           speakingRate: speakingRate,
         },
     };
@@ -128,40 +122,26 @@ export const generateSpeech = async (text: string, voice: string, speakingRate: 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
       contents: [{ parts: [{ text }] }],
-      config: config as any, // Using 'as any' to bypass potentially stale SDK types
+      config: config as any,
     });
 
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (!base64Audio) {
-      throw new Error("The text-to-speech service did not return any audio data. This can happen if the analysis result is empty or contains unsupported content.");
-    }
+    if (!base64Audio) throw new Error("TTS did not return audio data.");
     return base64Audio;
   } catch (error) {
     console.error("Error generating speech:", error);
-    if (error instanceof Error) {
-        if (error.message.includes("did not return any audio data")) {
-            throw error; // Re-throw our specific error
-        }
-        // Generalize other API/network errors
-        throw new Error("Failed to generate audio due to a service error. Please try again later.");
-    }
-    throw new Error("An unknown error occurred while generating speech.");
+    if (error instanceof Error && error.message.includes("did not return any audio data")) throw error;
+    throw new Error("Failed to generate audio due to service error.");
   }
 };
 
-
 export const createChat = (systemPrompt?: string, initialHistory?: Content[]): Chat => {
-    const config: GenerateContentConfig = {
-        safetySettings,
-    };
+    const config: GenerateContentConfig = { safetySettings };
+    if (systemPrompt && systemPrompt.trim()) config.systemInstruction = systemPrompt;
 
-    if (systemPrompt && systemPrompt.trim()) {
-        config.systemInstruction = systemPrompt;
-    }
-
+    // For chat, we start with Pro to ensure context retention and reasoning quality
     return ai.chats.create({
-        // FIX: Updated model to `gemini-3-pro-preview` for chat sessions.
-        model: 'gemini-3-pro-preview',
+        model: 'gemini-3-pro-preview', 
         history: initialHistory,
         config,
     });
@@ -170,25 +150,15 @@ export const createChat = (systemPrompt?: string, initialHistory?: Content[]): C
 export const generateSdxlPrompt = async (promptWithContext: string): Promise<string> => {
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview', // Use a strong model for creative/instructed text generation
+      model: 'gemini-3-pro-preview',
       contents: { parts: [{ text: promptWithContext }] },
-      config: {
-        maxOutputTokens: 2048, // Generous token limit for detailed prompts
-        safetySettings,
-      },
+      config: { maxOutputTokens: 2048, safetySettings },
     });
-
     const text = response.text;
-    if (typeof text !== 'string' || !text.trim()) {
-      throw new Error('The model returned an empty or invalid prompt.');
-    }
-    // Clean up the response to remove any preamble or markdown formatting
+    if (typeof text !== 'string' || !text.trim()) throw new Error('Invalid prompt response.');
     return text.trim();
   } catch (error) {
     console.error("Error generating SDXL prompt:", error);
-    if (error instanceof Error) {
-      throw new Error(`Gemini API Error: ${error.message}`);
-    }
-    throw new Error("An unknown error occurred while generating the SDXL prompt.");
+    throw error instanceof Error ? new Error(`Gemini API Error: ${error.message}`) : new Error("Unknown error generating SDXL prompt.");
   }
 };

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Agent, resetAgentsToDefault } from '../services/agentService';
+import { Agent } from '../services/agentService';
 import { AgentForm } from './AgentForm';
 import { PlusIcon } from './icons/PlusIcon';
 import { PencilIcon } from './icons/PencilIcon';
