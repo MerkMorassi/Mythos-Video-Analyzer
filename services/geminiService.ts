@@ -49,20 +49,14 @@ export const getEmbeddings = async (text: string): Promise<number[] | null> => {
     }
 };
 
-export const getAvailableModels = async () => {
-  try {
-    // FIX: `ai.models.list()` returns a Pager object which is an async iterable.
-    // The previous implementation was trying to access a `.models` property that does not exist.
-    // We now iterate over the pager to collect all the models.
-    const models = [];
-    for await (const model of ai.models.list()) {
-      models.push(model);
-    }
-    return models;
-  } catch (error) {
-    console.error("Error fetching models:", error);
-    return [];
-  }
+export const getAvailableModels = async (): Promise<{ displayName: string, name: string }[]> => {
+  // The client-side SDK does not support listing models dynamically.
+  // We return a hardcoded list of the primary models this application uses
+  // for display purposes in the UI.
+  return Promise.resolve([
+    { displayName: 'Gemini 3.0 Pro', name: 'gemini-3-pro-preview' },
+    { displayName: 'Gemini 2.5 Flash', name: 'gemini-2.5-flash' },
+  ]);
 };
 
 export const analyzeVideo = async (prompt: string, frames: string[], systemPrompt?: string): Promise<string> => {
@@ -88,6 +82,18 @@ export const analyzeVideo = async (prompt: string, frames: string[], systemPromp
     return text;
   } catch (error) {
     console.error("Error analyzing video:", error);
+    if (error instanceof Error && error.message.includes(model)) {
+        // Fallback logic
+        console.warn(`Model ${model} failed, falling back to gemini-2.5-flash.`);
+        const fallbackResponse = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: { parts: [{ text: fullPrompt(prompt) }, ...imageParts] },
+          config,
+        });
+        const fallbackText = fallbackResponse.text;
+        if (typeof fallbackText !== 'string' || !fallbackText.trim()) throw new Error('Fallback model also returned an empty response.');
+        return fallbackText;
+    }
     throw error instanceof Error ? new Error(`Gemini API Error: ${error.message}`) : new Error("Unknown error during video analysis");
   }
 };
@@ -111,6 +117,18 @@ export const analyzeImage = async (prompt: string, imageBase64: string, mimeType
     return text;
   } catch (error) {
     console.error("Error analyzing image:", error);
+     if (error instanceof Error && error.message.includes(model)) {
+        // Fallback logic
+        console.warn(`Model ${model} failed, falling back to gemini-2.5-flash.`);
+        const fallbackResponse = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: { parts: [{ text: fullPrompt(prompt) }, imagePart] },
+          config,
+        });
+        const fallbackText = fallbackResponse.text;
+        if (typeof fallbackText !== 'string' || !fallbackText.trim()) throw new Error('Fallback model also returned an empty response.');
+        return fallbackText;
+    }
     throw error instanceof Error ? new Error(`Gemini API Error: ${error.message}`) : new Error("Unknown error during image analysis");
   }
 };
@@ -167,4 +185,20 @@ export const generateSdxlPrompt = async (promptWithContext: string): Promise<str
     console.error("Error generating SDXL prompt:", error);
     throw error instanceof Error ? new Error(`Gemini API Error: ${error.message}`) : new Error("Unknown error generating SDXL prompt.");
   }
+};
+
+export const generateText = async (prompt: string): Promise<string> => {
+    try {
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash', // Use the fast model for utility tasks
+          contents: { parts: [{ text: prompt }] },
+          config: { maxOutputTokens: 4096, safetySettings, temperature: 0.2 },
+        });
+        const text = response.text;
+        if (typeof text !== 'string' || !text.trim()) throw new Error('The model returned an empty response.');
+        return text;
+    } catch(error) {
+        console.error("Error during text generation:", error);
+        throw error instanceof Error ? new Error(`Gemini API Error: ${error.message}`) : new Error("Unknown error during text generation.");
+    }
 };
