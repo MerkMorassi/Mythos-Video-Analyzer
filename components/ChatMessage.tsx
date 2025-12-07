@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { UserIcon } from './icons/UserIcon';
 import { Agent } from '../services/agentService';
@@ -7,12 +6,14 @@ import { ClipboardIcon } from './icons/ClipboardIcon';
 import { SpeakerIcon } from './icons/SpeakerIcon';
 import { SpeakerOffIcon } from './icons/SpeakerOffIcon';
 import { WarningIcon } from './icons/WarningIcon';
+import { FileIcon } from './icons/FileIcon';
 
 interface ChatMessagePart {
   text?: string;
   inlineData?: {
     mimeType: string;
     data: string;
+    fileName?: string;
   };
 }
 
@@ -129,20 +130,23 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, agent, audioS
         {parts.map((part, partIndex) => (
           <div key={partIndex}>
              {part.inlineData && (
-               <div className="mb-2">
-                 {part.inlineData.mimeType.startsWith('image/') ? (
-                   <img 
-                     src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`} 
-                     alt="Uploaded content" 
-                     className="max-w-md rounded-lg max-h-64 object-cover border border-white/20"
-                   />
-                 ) : (
-                   <div className="bg-primary/50 p-2 rounded text-sm flex items-center gap-2 max-w-sm">
-                     <PaperclipIcon className="w-4 h-4" />
-                     <span>Attached Media ({part.inlineData.mimeType})</span>
-                   </div>
-                 )}
-               </div>
+                <div className="mb-2">
+                    {part.inlineData.mimeType.startsWith('image/') ? (
+                    <img
+                        src={`data:${part.inlineData.mimeType};base64,${part.inlineData.data}`}
+                        alt={part.inlineData.fileName || 'Uploaded image'}
+                        className="max-w-md rounded-lg max-h-64 object-cover border border-accent"
+                    />
+                    ) : (
+                    <div className="bg-primary/50 p-3 rounded-lg border border-accent/50 text-sm flex items-center gap-3 max-w-sm">
+                        <FileIcon className="w-6 h-6 text-text-secondary flex-shrink-0" />
+                        <div className="flex flex-col overflow-hidden">
+                        <span className="font-semibold text-text-primary truncate">{part.inlineData.fileName || 'Attached File'}</span>
+                        <span className="text-xs text-text-secondary">{part.inlineData.mimeType}</span>
+                        </div>
+                    </div>
+                    )}
+                </div>
             )}
             {part.text && (
               <div dangerouslySetInnerHTML={{ __html: part.text }} />

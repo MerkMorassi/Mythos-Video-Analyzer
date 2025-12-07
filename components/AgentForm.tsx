@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { Agent, getAvailableVoices } from '../services/agentService';
 import { UserIcon } from './icons/UserIcon';
 import { TrashIcon } from './icons/TrashIcon';
@@ -32,6 +32,7 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
   
   const [formError, setFormError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -64,12 +65,16 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (saveState !== 'idle') return;
+
     if (!name.trim()) {
         setFormError("Agent Name cannot be empty.");
         setActiveTab('profile');
         return;
     }
     setFormError(null);
+    setSaveState('saving');
+    
     onSave({
       name,
       voice,
@@ -78,6 +83,11 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
       speakingRate,
       autoPlayAudio,
     });
+    
+    setSaveState('saved');
+    setTimeout(() => {
+        onCancel();
+    }, 1500);
   };
 
   return (
@@ -216,8 +226,10 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
         {/* Footer Actions */}
         <div className="p-4 border-t border-accent bg-secondary rounded-b-xl flex justify-end space-x-3">
           <button type="button" onClick={onCancel} className="px-6 py-3 bg-secondary border border-accent text-text-secondary font-semibold rounded-xl hover:bg-accent hover:text-text-primary transition-colors">Cancel</button>
-          <button type="submit" className="px-6 py-3 bg-brand text-text-primary font-semibold rounded-xl hover:bg-brand-hover transition-all shadow-lg hover:shadow-xl active:scale-95">
-            Save Settings
+          <button type="submit" className="px-6 py-3 bg-brand text-text-primary font-semibold rounded-xl hover:bg-brand-hover transition-all shadow-lg hover:shadow-xl active:scale-95 w-32" disabled={saveState !== 'idle'}>
+            {saveState === 'idle' && 'Save Settings'}
+            {saveState === 'saving' && 'Saving...'}
+            {saveState === 'saved' && '✓ Saved!'}
           </button>
         </div>
       </form>

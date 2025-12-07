@@ -27,6 +27,9 @@ import { vectorDb } from './services/vectorDbService';
 import { TELEPORTER } from './utils/numMarkX';
 import { cosineSimilarity } from './services/embeddingService';
 import { PencilIcon } from './components/icons/PencilIcon';
+import { ChatIcon } from './components/icons/ChatIcon';
+import { AgentChatView } from './components/AgentChatView';
+import { getApiKey } from './services/apiKeyService';
 
 
 const fileToBase64 = (file: File): Promise<string> =>
@@ -45,14 +48,14 @@ interface Suggestion {
 const CINEMATOGRAPHY_SUGGESTIONS: { video: Suggestion[]; image: Suggestion[] } = {
   video: [
     { label: "Camera Movement", prompt: "Analyze camera movement: Identify tracking shots, push-ins, pans, and establishing shots." },
-    { label: "Tech Specs", prompt: "Detailed Camera Tech Specs: Deduce specific camera model, lens choice, aperture, ISO, and shutter angle based on visual artifacts." },
+    { label: "Lens & Settings", prompt: "Analyze the probable lens used, aperture, and other camera settings for this video, including camera model, ISO, and shutter angle." },
     { label: "Scene Breakdown", prompt: "Break down the scene: Lighting ratios, blocking, and color grading palette." },
     { label: "Narrative", prompt: "Describe the visual narrative: Mood, tone, and storytelling techniques." },
     { label: "Reverse Engineer", prompt: "Reverse Engineer Prompt: Create a detailed generative video prompt to replicate this sequence, focusing on cinematography and style." }
   ],
   image: [
     { label: "Lighting", prompt: "Analyze lighting: Key ratios, color temperature, and grading style." },
-    { label: "Tech Specs", prompt: "Detailed Camera Tech Specs: Estimate focal length, aperture, depth of field, and probable lens choice." },
+    { label: "Lens & Settings", prompt: "Analyze the probable lens used, aperture, depth of field, and other camera settings for this image." },
     { label: "Composition", prompt: "Break down composition: Framing, rule of thirds, and visual balance." },
     { label: "Visual Style", prompt: "Describe the visual style: Mood, tone, and photographic aesthetic." },
     { label: "Reverse Engineer", prompt: "Reverse Engineer Prompt: Create a detailed generative image prompt to replicate this shot, focusing on cinematography and lighting." }
@@ -65,6 +68,7 @@ interface ChatMessagePart {
   inlineData?: {
     mimeType: string;
     data: string;
+    fileName?: string;
   };
 }
 
@@ -90,7 +94,7 @@ export default function App() {
   
   const [clearKey, setClearKey] = useState<number>(0);
   
-  const [activeTab, setActiveTab] = useState<'analyzer' | 'templates' | 'knowledge'>('analyzer');
+  const [activeTab, setActiveTab] = useState<'analyzer' | 'chat' | 'knowledge' | 'templates'>('analyzer');
   
   // Single Agent State
   const [agent, setAgent] = useState<Agent>(getAgent());
@@ -105,6 +109,7 @@ export default function App() {
   const [isReEngineering, setIsReEngineering] = useState<boolean>(false);
   const [reEngineeredPrompt, setReEngineeredPrompt] = useState<string | null>(null);
   const [retrievedContext, setRetrievedContext] = useState<string | null>(null);
+  const [hasApiKey, setHasApiKey] = useState<boolean>(!!getApiKey());
 
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -158,6 +163,10 @@ export default function App() {
   useEffect(() => {
     refreshAgent();
   }, [refreshAgent]);
+
+  const handleApiKeyUpdate = useCallback(() => {
+    setHasApiKey(!!getApiKey());
+  }, []);
 
   const getAudioContext = () => {
     if (!audioContextRef.current) {
@@ -263,6 +272,11 @@ export default function App() {
   };
 
   const handleAnalyzeClick = async () => {
+    if (!hasApiKey) {
+        setError("API Key not set. Please go to the Knowledge tab to configure your API Key.");
+        setActiveTab('knowledge');
+        return;
+    }
     if (!mediaSource || !prompt.trim() || !agent) {
       setError(mediaSource && prompt.trim() ? 'Agent configuration error.' : `Please select a ${mediaType} and provide an analysis prompt.`);
       return;
@@ -305,7 +319,9 @@ export default function App() {
               const allVectors = await vectorDb.getAllVectors();
               
               // A. Teleporter (O(1) Keyword Match)
-              const directHitsIds = TELEPORTER.teleport(prompt);
+              // FIX: Changed type of directHitsIds from string[] to number[] to match the return type of TELEPORTER.teleport.
+              // This resolves the type error and allows correct filtering of vectors by ID.
+              const directHitsIds: number[] | null = TELEPORTER.teleport(prompt);
               if (directHitsIds && directHitsIds.length > 0) {
                   const directDocs = allVectors.filter(v => directHitsIds.includes(v.id));
                   if (directDocs.length > 0) {
@@ -418,11 +434,15 @@ export default function App() {
     }
   };
   
-    const handleKnowledgeAnalytics = async (type: 'SUMMARY' | 'QUESTIONS') => {
+    const handleKnowledgeAnalytics = async (type: 'SUMMARY' | 'QUESTIONS' | 'ENTITIES' | 'GAPS') => {
+        if (!hasApiKey) {
+            setError("API Key not set. Please configure it first.");
+            return;
+        }
         setIsLoading(true);
         setProgressMessage(`Running ${type.toLowerCase()} on Knowledge Base...`);
         setError(null);
-        setActiveTab('analyzer'); // Switch to analyzer view to show results
+        setActiveTab('analyzer'); 
         
         try {
             const vectors = await vectorDb.getAllVectors();
@@ -432,17 +452,28 @@ export default function App() {
             }
 
             const sample = vectors.sort(() => 0.5 - Math.random())
-                                .slice(0, 20)
+                                .slice(0, 30)
                                 .map(v => v.text)
                                 .join("\n\n---\n\n");
+            let prompt = '';
 
-            const prompt = type === 'SUMMARY'
-                ? `Synthesize these text fragments from a knowledge base into a high-level executive briefing. Identify key themes, entities, and relationships.\n\nCONTEXT:\n${sample}`
-                : `Based on these text fragments, suggest three insightful questions a user might ask.\n\nCONTEXT:\n${sample}`;
+            switch(type) {
+                case 'SUMMARY':
+                    prompt = `Synthesize these text fragments from a knowledge base into a high-level executive briefing. Identify key themes, entities, and relationships.\n\nCONTEXT:\n${sample}`;
+                    break;
+                case 'QUESTIONS':
+                    prompt = `Based on these text fragments, suggest three insightful questions a user might ask to explore the knowledge base further.\n\nCONTEXT:\n${sample}`;
+                    break;
+                case 'ENTITIES':
+                    prompt = `Extract all key named entities (characters, locations, organizations, concepts) from the following text fragments. Group them by category.\n\nCONTEXT:\n${sample}`;
+                    break;
+                case 'GAPS':
+                     prompt = `Act as a continuity editor. Review the following text fragments from a knowledge base. Identify potential contradictions, inconsistencies, or significant gaps in the information. Provide a bulleted list of your findings.\n\nCONTEXT:\n${sample}`;
+                     break;
+            }
             
             const result = await generateText(prompt);
-            
-            setAnalysisResult("AI analysis of your Knowledge Base is complete.");
+            setAnalysisResult(`AI analysis of your Knowledge Base is complete. See conversation below for details.`);
             const messageId = `analytics-${Date.now()}`;
             setChatHistory(prev => [...prev, { id: messageId, role: 'model', parts: [{ text: result }] }]);
             setIsChatVisible(true);
@@ -460,45 +491,51 @@ export default function App() {
     if (!chatSession || (!chatMessage.trim() && (!files || files.length === 0))) return;
 
     setIsChatLoading(true);
-    const currentMessage = chatMessage; 
-    setChatMessage(''); 
+    const currentMessage = chatMessage;
+    setChatMessage('');
 
     try {
-        const parts: Part[] = [];
-        if (files && files.length > 0) {
-            for (const file of files) {
-                const base64 = await fileToBase64(file);
-                parts.push({ inlineData: { mimeType: file.type, data: base64 } });
-            }
+      const partsForHistory: ChatMessagePart[] = [];
+      const partsForApi: Part[] = [];
+
+      if (files && files.length > 0) {
+        for (const file of files) {
+          const base64 = await fileToBase64(file);
+          const mimeType = file.type || 'application/octet-stream';
+          partsForHistory.push({ inlineData: { mimeType, data: base64, fileName: file.name } });
+          partsForApi.push({ inlineData: { mimeType, data: base64 } });
         }
-        if (currentMessage.trim()) parts.push({ text: currentMessage });
+      }
+      if (currentMessage.trim()) {
+        partsForHistory.push({ text: currentMessage });
+        partsForApi.push({ text: currentMessage });
+      }
 
-        const newHistoryEntry = {
-            id: `user-${Date.now()}`, 
-            role: 'user' as const, 
-            parts: parts.map(p => ({
-                text: p.text,
-                inlineData: p.inlineData ? { mimeType: p.inlineData.mimeType, data: p.inlineData.data } : undefined
-            }))
-        };
-        setChatHistory(prev => [...prev, newHistoryEntry]);
+      const newHistoryEntry = {
+        id: `user-${Date.now()}`,
+        role: 'user' as const,
+        parts: partsForHistory,
+      };
+      setChatHistory((prev) => [...prev, newHistoryEntry]);
 
-        const result = await chatSession.sendMessage({ message: parts });
-        const responseText = result.text;
-        
-        if (responseText) {
-          const modelMessageId = `model-${Date.now()}`;
-          setChatHistory(prev => [...prev, { id: modelMessageId, role: 'model', parts: [{ text: responseText }] }]);
-          if (agent.autoPlayAudio) {
-              handleGenerateAudio(responseText, modelMessageId);
-          }
+      const result = await chatSession.sendMessage({ message: partsForApi });
+      const responseText = result.text;
+
+      if (responseText) {
+        const modelMessageId = `model-${Date.now()}`;
+        setChatHistory((prev) => [...prev, { id: modelMessageId, role: 'model', parts: [{ text: responseText }] }]);
+        if (agent.autoPlayAudio) {
+          handleGenerateAudio(responseText, modelMessageId);
         }
-
+      }
     } catch (err) {
-        console.error("Chat error:", err);
-        setChatHistory(prev => [...prev, { id: `error-${Date.now()}`, role: 'model', parts: [{ text: "Sorry, I encountered an error processing your message. Please try again." }] }]);
+      console.error("Chat error:", err);
+      setChatHistory((prev) => [
+        ...prev,
+        { id: `error-${Date.now()}`, role: 'model', parts: [{ text: "Sorry, I encountered an error processing your message. Please try again." }] },
+      ]);
     } finally {
-        setIsChatLoading(false);
+      setIsChatLoading(false);
     }
   };
 
@@ -506,6 +543,11 @@ export default function App() {
   
   const handleReEngineerPrompt = async () => {
     if (!analysisResult) return;
+    if (!hasApiKey) {
+        setError("API Key not set. Please configure it first.");
+        setActiveTab('knowledge');
+        return;
+    }
     
     const template = getDefaultPromptTemplate();
     if (!template) {
@@ -539,6 +581,137 @@ export default function App() {
      setIsAgentSettingsOpen(false);
   };
 
+  const renderActiveTab = () => {
+    switch (activeTab) {
+        case 'analyzer':
+            return (
+              <div className="flex flex-col space-y-8 animate-fade-in">
+                <div className="text-center space-y-3">
+                   <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-text-secondary">Media Analysis Agent</h1>
+                  <p className="text-text-secondary text-sm">Upload media for detailed cinematography & visual analysis.</p>
+                  
+                   <div className="flex justify-center">
+                      <div className="flex items-center gap-2 bg-secondary/50 border border-accent rounded-xl pl-3 pr-1 py-1 group hover:border-brand/50 transition-colors">
+                          {agent.avatar ? <img src={agent.avatar} alt={agent.name} className="w-5 h-5 rounded-full object-cover" /> : <UserIcon className="w-4 h-4 text-text-secondary"/>}
+                          <span className="text-xs font-medium text-text-primary">{agent.name}</span>
+                          {(agent.knowledgeBaseUrl || agent.enableLocalRag) && (
+                              <div title={agent.enableLocalRag ? "Local & Remote RAG Active" : "Remote RAG Active"}>
+                                  <div className="flex items-center gap-1 bg-brand/20 text-brand-hover px-2 py-0.5 rounded-full">
+                                      <DatabaseIcon className="w-3 h-3" />
+                                      <span className="text-[10px] font-bold uppercase tracking-wider">RAG Active</span>
+                                  </div>
+                              </div>
+                          )}
+                          <button 
+                            onClick={() => setIsAgentSettingsOpen(true)}
+                            className="p-1.5 rounded-lg hover:bg-accent text-text-secondary hover:text-text-primary transition-colors"
+                            title="Configure Agent Persona"
+                          >
+                              <PencilIcon className="w-3 h-3" />
+                          </button>
+                      </div>
+                   </div>
+    
+                </div>
+    
+                <div className="bg-secondary/30 p-6 rounded-xl border border-accent shadow-sm">
+                  <MediaInput key={clearKey} onMediaChange={handleMediaChange} />
+                </div>
+    
+                <div className="space-y-4">
+                  <div>
+                    <label htmlFor="prompt" className="block text-sm font-medium text-text-secondary mb-2">2. Analysis Prompt</label>
+                    <textarea id="prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={mediaType === 'video' ? "Describe the video content..." : "Describe the image..."} className="w-full h-28 p-4 bg-secondary border border-accent rounded-xl focus:ring-2 focus:ring-brand focus:outline-none transition duration-200 resize-none placeholder-text-secondary/70 shadow-inner text-base" />
+                  </div>
+                  
+                   <div className="flex flex-wrap gap-2">
+                    {CINEMATOGRAPHY_SUGGESTIONS[mediaType].map((suggestion, idx) => (
+                      <button key={idx} onClick={() => handleSuggestionClick(suggestion.prompt)} className="text-xs px-3 py-1.5 rounded-xl bg-accent/50 hover:bg-brand hover:text-white border border-accent transition-colors text-text-secondary">{suggestion.label}</button>
+                    ))}
+                  </div>
+                  
+                  <div className="flex space-x-4 items-stretch pt-2">
+                    <button onClick={handleAnalyzeClick} disabled={isLoading || !mediaSource || !prompt.trim() || !hasApiKey} className="flex-1 py-3 bg-brand text-text-primary font-semibold rounded-xl hover:bg-brand-hover disabled:bg-accent disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl active:scale-95 text-base flex items-center justify-center">
+                      {isLoading ? 'Analyzing...' : 'Analyze'}
+                    </button>
+                    <button onClick={resetState} className="px-6 py-3 bg-secondary border border-accent text-text-secondary font-semibold rounded-xl hover:bg-accent hover:text-text-primary transition-colors flex items-center justify-center text-base">Clear All</button>
+                  </div>
+                </div>
+    
+                {error && <div className="p-4 bg-red-900/20 border border-red-500/30 rounded-xl flex items-start gap-3 text-red-200 animate-fade-in"><WarningIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><p className="text-sm">{error}</p></div>}
+                
+                {isLoading && <div className="py-12 animate-fade-in"><Loader message={progressMessage} mediaType={mediaType} /></div>}
+    
+                {!isLoading && (analysisResult || extractedFrames.length > 0 || retrievedContext) && (
+                  <div className="space-y-8 animate-fade-in">
+                    {retrievedContext && (agent.knowledgeBaseUrl || agent.enableLocalRag) && (
+                        <KnowledgeBaseContext context={retrievedContext} warning={ragWarning} url={agent.knowledgeBaseUrl || 'Mythos Vault (Local)'} />
+                    )}
+    
+                    {analysisResult && (
+                      <>
+                        <div className="border-t border-accent pt-8"><FramePreview frames={extractedFrames} title={mediaType === 'video' ? 'Extracted Keyframes' : 'Analyzed Image'} /></div>
+                        <div className="bg-secondary/30 border border-accent rounded-xl p-6 shadow-sm">
+                           <AnalysisResult 
+                              result={analysisResult} 
+                              audioState={messageAudioStates['analysis-result']}
+                              onPlayAudio={() => playAudio('analysis-result')} 
+                              onStopAudio={() => stopAudio('analysis-result')} 
+                              onGenerateAudio={() => handleGenerateAudio(analysisResult, 'analysis-result')} 
+                              onReEngineerPrompt={handleReEngineerPrompt} 
+                              isReEngineering={isReEngineering} 
+                           />
+                        </div>
+                        
+                        {isReEngineering && <ReEngineeredPromptLoader />}
+                        {reEngineeredPrompt && <div className="animate-fade-in"><ReEngineeredPrompt prompt={reEngineeredPrompt} /></div>}
+    
+                        <div ref={scrollTriggerRef} className="h-1" />
+                        
+                        {chatHistory.map((msg) => (
+                          <ChatMessage 
+                            key={msg.id} 
+                            message={msg} 
+                            agent={agent} 
+                            audioState={messageAudioStates[msg.id]}
+                            onPlayAudio={() => playAudio(msg.id)}
+                            onStopAudio={() => stopAudio(msg.id)}
+                            onGenerateAudio={(text) => handleGenerateAudio(text, msg.id)}
+                          />
+                        ))}
+                        
+                        {isChatLoading && (
+                           <div className="flex justify-start">
+                               <div className="flex items-center gap-4 bg-secondary/30 border border-accent rounded-xl p-4 shadow-sm w-full">
+                                   <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center flex-shrink-0"><div className="animate-spin h-5 w-5 border-2 border-brand border-t-transparent rounded-full"></div></div>
+                                   <span className="text-sm font-semibold text-text-secondary">Thinking...</span>
+                               </div>
+                           </div>
+                        )}
+    
+                        <div ref={chatEndRef} />
+                        
+                        <div className={`sticky bottom-4 z-20 transition-all duration-500 ease-in-out transform ${isChatVisible ? 'translate-y-0 opacity-100' : 'translate-y-32 opacity-0'}`}>
+                          <ChatInterface history={chatHistory} message={chatMessage} onMessageChange={setChatMessage} onSendMessage={handleSendMessage} isLoading={isChatLoading} />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+        case 'chat':
+            return <AgentChatView agent={agent} hasApiKey={hasApiKey} />;
+        case 'knowledge':
+            return <KnowledgeView onRunAnalysis={handleKnowledgeAnalytics} agent={agent} onSaveSettings={handleSaveAgentSettings} onApiKeyUpdate={handleApiKeyUpdate} hasApiKey={hasApiKey} />;
+        case 'templates':
+            return <PromptTemplatesView />;
+        default:
+            return null;
+    }
+  };
+
+
   return (
     <div className="min-h-screen bg-primary text-text-primary font-sans selection:bg-brand selection:text-white">
       <div className="border-b border-accent bg-secondary/30 sticky top-0 z-10 backdrop-blur-md">
@@ -546,6 +719,10 @@ export default function App() {
           <button onClick={() => setActiveTab('analyzer')} className={`flex-1 py-4 text-sm font-semibold flex items-center justify-center gap-2 transition-colors relative ${activeTab === 'analyzer' ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
             <AnalyzerIcon className="w-5 h-5" /> Analyzer
             {activeTab === 'analyzer' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand animate-fade-in"></span>}
+          </button>
+          <button onClick={() => setActiveTab('chat')} className={`flex-1 py-4 text-sm font-semibold flex items-center justify-center gap-2 transition-colors relative ${activeTab === 'chat' ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+            <ChatIcon className="w-5 h-5" /> Agent Chat
+            {activeTab === 'chat' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand animate-fade-in"></span>}
           </button>
           <button onClick={() => setActiveTab('knowledge')} className={`flex-1 py-4 text-sm font-semibold flex items-center justify-center gap-2 transition-colors relative ${activeTab === 'knowledge' ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
             <DatabaseIcon className="w-5 h-5" /> Knowledge
@@ -559,137 +736,16 @@ export default function App() {
       </div>
 
       <main className="max-w-3xl mx-auto p-6 pb-20">
-        {activeTab === 'analyzer' ? (
-          <div className="flex flex-col space-y-8 animate-fade-in">
-            <div className="text-center space-y-3">
-               <h1 className="text-3xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-text-secondary">Media Analysis Agent</h1>
-              <p className="text-text-secondary text-sm">Upload media for detailed cinematography & visual analysis.</p>
-              
-               <div className="flex justify-center">
-                  <div className="flex items-center gap-2 bg-secondary/50 border border-accent rounded-full pl-3 pr-1 py-1 group hover:border-brand/50 transition-colors">
-                      {agent.avatar ? <img src={agent.avatar} alt={agent.name} className="w-5 h-5 rounded-full object-cover" /> : <UserIcon className="w-4 h-4 text-text-secondary"/>}
-                      <span className="text-xs font-medium text-text-primary">{agent.name}</span>
-                      {(agent.knowledgeBaseUrl || agent.enableLocalRag) && (
-                          <div className="flex items-center gap-1 pl-2 border-l border-accent/50 text-brand-hover" title={agent.enableLocalRag ? "Local & Remote RAG" : "Remote RAG Only"}>
-                              <DatabaseIcon className="w-3 h-3" /><span className="text-[10px] font-bold uppercase tracking-wider">RAG</span>
-                          </div>
-                      )}
-                      <button 
-                        onClick={() => setIsAgentSettingsOpen(true)}
-                        className="ml-2 p-1.5 rounded-full hover:bg-accent text-text-secondary hover:text-white transition-colors"
-                        title="Configure Agent Persona"
-                      >
-                          <PencilIcon className="w-3 h-3" />
-                      </button>
-                  </div>
-               </div>
-
-            </div>
-
-            <div className="bg-secondary/30 p-6 rounded-xl border border-accent shadow-sm">
-              <MediaInput key={clearKey} onMediaChange={handleMediaChange} />
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="prompt" className="block text-sm font-medium text-text-secondary mb-2">2. Analysis Prompt</label>
-                <textarea id="prompt" value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={mediaType === 'video' ? "Describe the video content..." : "Describe the image..."} className="w-full h-28 p-4 bg-secondary border border-accent rounded-xl focus:ring-2 focus:ring-brand focus:outline-none transition duration-200 resize-none placeholder-text-secondary/70 shadow-inner text-base" />
-              </div>
-              
-               <div className="flex flex-wrap gap-2">
-                {CINEMATOGRAPHY_SUGGESTIONS[mediaType].map((suggestion, idx) => (
-                  <button key={idx} onClick={() => handleSuggestionClick(suggestion.prompt)} className="text-xs px-3 py-1.5 rounded-xl bg-accent/50 hover:bg-brand hover:text-white border border-accent transition-colors text-text-secondary">{suggestion.label}</button>
-                ))}
-              </div>
-              
-              <div className="flex space-x-4 items-stretch pt-2">
-                <button onClick={handleAnalyzeClick} disabled={isLoading || !mediaSource || !prompt.trim()} className="flex-1 py-3 bg-brand text-text-primary font-semibold rounded-xl hover:bg-brand-hover disabled:bg-accent disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl active:scale-95 text-base flex items-center justify-center">
-                  {isLoading ? 'Analyzing...' : 'Analyze'}
-                </button>
-                <button onClick={resetState} className="px-6 py-3 bg-secondary border border-accent text-text-secondary font-semibold rounded-xl hover:bg-accent hover:text-text-primary transition-colors flex items-center justify-center text-base">Clear All</button>
-              </div>
-            </div>
-
-            {error && <div className="p-4 bg-red-900/20 border border-red-500/30 rounded-xl flex items-start gap-3 text-red-200 animate-fade-in"><WarningIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><p className="text-sm">{error}</p></div>}
-            
-            {isLoading && <div className="py-12 animate-fade-in"><Loader message={progressMessage} mediaType={mediaType} /></div>}
-
-            {!isLoading && (analysisResult || extractedFrames.length > 0 || retrievedContext) && (
-              <div className="space-y-8 animate-fade-in">
-                {retrievedContext && (agent.knowledgeBaseUrl || agent.enableLocalRag) && (
-                    <KnowledgeBaseContext context={retrievedContext} warning={ragWarning} url={agent.knowledgeBaseUrl || 'Mythos Vault (Local)'} />
-                )}
-
-                {analysisResult && (
-                  <>
-                    <div className="border-t border-accent pt-8"><FramePreview frames={extractedFrames} title={mediaType === 'video' ? 'Extracted Keyframes' : 'Analyzed Image'} /></div>
-                    <div className="bg-secondary/30 border border-accent rounded-xl p-6 shadow-sm">
-                       <AnalysisResult 
-                          result={analysisResult} 
-                          audioState={messageAudioStates['analysis-result']}
-                          onPlayAudio={() => playAudio('analysis-result')} 
-                          onStopAudio={() => stopAudio('analysis-result')} 
-                          onGenerateAudio={() => handleGenerateAudio(analysisResult, 'analysis-result')} 
-                          onReEngineerPrompt={handleReEngineerPrompt} 
-                          isReEngineering={isReEngineering} 
-                       />
-                    </div>
-                    
-                    {isReEngineering && <ReEngineeredPromptLoader />}
-                    {reEngineeredPrompt && <div className="animate-fade-in"><ReEngineeredPrompt prompt={reEngineeredPrompt} /></div>}
-
-                    <div ref={scrollTriggerRef} className="h-1" />
-                    
-                    {chatHistory.map((msg) => (
-                      <ChatMessage 
-                        key={msg.id} 
-                        message={msg} 
-                        agent={agent} 
-                        audioState={messageAudioStates[msg.id]}
-                        onPlayAudio={() => playAudio(msg.id)}
-                        onStopAudio={() => stopAudio(msg.id)}
-                        onGenerateAudio={(text) => handleGenerateAudio(text, msg.id)}
-                      />
-                    ))}
-                    
-                    {isChatLoading && (
-                       <div className="flex justify-start">
-                           <div className="flex items-center gap-4 bg-secondary/30 border border-accent rounded-xl p-4 shadow-sm w-full">
-                               <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center flex-shrink-0"><div className="animate-spin h-5 w-5 border-2 border-brand border-t-transparent rounded-full"></div></div>
-                               <span className="text-sm font-semibold text-text-secondary">Thinking...</span>
-                           </div>
-                       </div>
-                    )}
-
-                    <div ref={chatEndRef} />
-                    
-                    <div className={`sticky bottom-4 z-20 transition-all duration-500 ease-in-out transform ${isChatVisible ? 'translate-y-0 opacity-100' : 'translate-y-32 opacity-0'}`}>
-                      <ChatInterface history={chatHistory} message={chatMessage} onMessageChange={setChatMessage} onSendMessage={handleSendMessage} isLoading={isChatLoading} />
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-            
-            {isAgentSettingsOpen && (
-                <AgentForm 
-                    agent={agent}
-                    onSave={handleSaveAgentSettings}
-                    onCancel={() => setIsAgentSettingsOpen(false)}
-                />
-            )}
-            
-          </div>
-        ) : activeTab === 'knowledge' ? (
-           <KnowledgeView 
-             onRunAnalysis={handleKnowledgeAnalytics}
-             agent={agent}
-             onSaveSettings={handleSaveAgentSettings}
-           />
-        ) : (
-           <PromptTemplatesView />
-        )}
+        {renderActiveTab()}
       </main>
+       
+      {isAgentSettingsOpen && (
+          <AgentForm 
+              agent={agent}
+              onSave={handleSaveAgentSettings}
+              onCancel={() => setIsAgentSettingsOpen(false)}
+          />
+      )}
     </div>
   );
 }

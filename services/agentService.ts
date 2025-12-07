@@ -39,12 +39,15 @@ export function getAgent(): Agent {
   try {
     const saved = localStorage.getItem(AGENT_STORAGE_KEY);
     if (saved) {
-      return JSON.parse(saved);
+      const savedAgent = JSON.parse(saved);
+      // Merge with default agent to ensure all properties exist,
+      // preventing issues when new properties are added in updates.
+      return { ...DEFAULT_AGENT, ...savedAgent };
     }
   } catch (error) {
     console.error("Failed to load agent from localStorage:", error);
   }
-  // If no saved agent, save and return the default
+  // If no saved agent or an error occurred, save and return the default.
   saveAgent(DEFAULT_AGENT);
   return DEFAULT_AGENT;
 }

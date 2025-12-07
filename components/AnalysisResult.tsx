@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { SpeakerIcon } from './icons/SpeakerIcon';
 import { SpeakerOffIcon } from './icons/SpeakerOffIcon';
@@ -120,7 +119,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({
           </div>
       )}
       <div
-        className="prose prose-invert prose-base max-w-none flex-grow overflow-y-auto bg-primary/50 p-6 rounded-lg prose-headings:text-brand-hover prose-headings:font-semibold prose-headings:mt-8 prose-headings:mb-4 prose-strong:text-text-primary prose-blockquote:border-l-accent prose-li:marker:text-brand leading-loose space-y-6 prose-p:my-6"
+        className="prose prose-invert prose-lg max-w-none flex-grow overflow-y-auto bg-primary/50 p-6 rounded-lg prose-headings:text-brand-hover prose-headings:font-semibold prose-headings:mt-8 prose-headings:mb-4 prose-strong:text-text-primary prose-blockquote:border-l-accent prose-li:marker:text-brand"
         dangerouslySetInnerHTML={{ __html: result }}
       />
     </div>

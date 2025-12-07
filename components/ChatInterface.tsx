@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { SendIcon } from './icons/SendIcon';
 import { PaperclipIcon } from './icons/PaperclipIcon';
+import { FileIcon } from './icons/FileIcon';
 
 interface ChatMessagePart {
   text?: string;
@@ -65,7 +66,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         <div className="flex gap-2 overflow-x-auto pb-3 px-1 border-b border-accent mb-3">
           {selectedFiles.map((file, index) => (
             <div key={index} className="relative group flex-shrink-0">
-              <div className="w-16 h-16 rounded-lg bg-primary border border-accent flex items-center justify-center overflow-hidden">
+              <div className="w-20 h-20 rounded-lg bg-primary border border-accent flex items-center justify-center overflow-hidden">
                 {file.type.startsWith('image/') ? (
                   <img 
                     src={URL.createObjectURL(file)} 
@@ -74,9 +75,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     onLoad={(e) => URL.revokeObjectURL((e.target as HTMLImageElement).src)}
                   />
                 ) : (
-                   <div className="p-1 text-center">
-                        <PaperclipIcon className="w-6 h-6 mx-auto text-text-secondary"/>
-                        <span className="text-[10px] text-text-secondary break-all">{file.name.split('.').pop()}</span>
+                   <div className="p-2 text-center flex flex-col items-center justify-center">
+                        <FileIcon className="w-8 h-8 mx-auto text-text-secondary"/>
+                        <span className="text-[10px] text-text-secondary break-all mt-1 truncate w-16">{file.name}</span>
                    </div>
                 )}
               </div>
@@ -98,7 +99,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             ref={fileInputRef}
             className="hidden"
             onChange={handleFileSelect}
-            accept="image/*,video/*,application/pdf,text/plain"
+            accept="image/*,video/*,application/pdf,text/plain,.doc,.docx,.md,.csv"
         />
         <button
             onClick={() => fileInputRef.current?.click()}

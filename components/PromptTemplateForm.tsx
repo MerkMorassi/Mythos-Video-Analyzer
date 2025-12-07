@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { PromptTemplate } from '../services/promptTemplateService';
 
@@ -11,9 +12,12 @@ export const PromptTemplateForm: React.FC<PromptTemplateFormProps> = ({ template
   const [name, setName] = useState(template?.name || '');
   const [content, setContent] = useState(template?.content || '');
   const [formError, setFormError] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (saveState !== 'idle') return;
+
     if (!name.trim() || !content.trim()) {
       setFormError("Template Name and Content cannot be empty.");
       return;
@@ -22,12 +26,20 @@ export const PromptTemplateForm: React.FC<PromptTemplateFormProps> = ({ template
         setFormError("Template must include the {{ANALYSIS_TEXT}} placeholder.");
         return;
     }
+    
     setFormError(null);
+    setSaveState('saving');
+    
     onSave({
       id: template?.id,
       name,
       content,
     });
+    
+    setSaveState('saved');
+    setTimeout(() => {
+        onCancel();
+    }, 1500);
   };
 
   return (
@@ -70,8 +82,10 @@ export const PromptTemplateForm: React.FC<PromptTemplateFormProps> = ({ template
         
         <div className="flex justify-end space-x-3 pt-2">
           <button type="button" onClick={onCancel} className="px-6 py-3 bg-secondary border border-accent text-text-secondary font-semibold rounded-xl hover:bg-accent hover:text-text-primary transition-colors">Cancel</button>
-          <button type="submit" className="px-6 py-3 bg-brand text-text-primary font-semibold rounded-xl hover:bg-brand-hover transition-all shadow-lg hover:shadow-xl active:scale-95">
-            {template ? 'Update' : 'Save'}
+          <button type="submit" className="px-6 py-3 bg-brand text-text-primary font-semibold rounded-xl hover:bg-brand-hover transition-all shadow-lg hover:shadow-xl active:scale-95 w-32" disabled={saveState !== 'idle'}>
+            {saveState === 'idle' && (template ? 'Update' : 'Save')}
+            {saveState === 'saving' && 'Saving...'}
+            {saveState === 'saved' && (template ? '✓ Updated!' : '✓ Saved!')}
           </button>
         </div>
       </form>
