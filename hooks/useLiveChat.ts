@@ -1,7 +1,7 @@
 
 import { useState, useRef, useCallback } from 'react';
-// FIX: Removed non-exported member 'LiveSession'. The session object type is not exported from the SDK.
-import { GoogleGenAI, LiveServerMessage, Modality, Blob } from '@google/genai';
+// FIX: Alias Blob to GenAIBlob to avoid conflict with global Blob type.
+import { GoogleGenAI, LiveServerMessage, Modality, Blob as GenAIBlob } from '@google/genai';
 import { getApiKey } from '../services/apiKeyService';
 import { Agent } from '../services/agentService';
 import { decode, decodeAudioData, encode } from '../utils/audio';
@@ -121,7 +121,7 @@ export const useLiveChat = (agent: Agent) => {
                             for (let i = 0; i < inputData.length; i++) {
                                 int16[i] = inputData[i] * 32768;
                             }
-                            const pcmBlob: Blob = {
+                            const pcmBlob: GenAIBlob = {
                                 data: encode(new Uint8Array(int16.buffer)),
                                 mimeType: 'audio/pcm;rate=16000',
                             };

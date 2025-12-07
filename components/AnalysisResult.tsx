@@ -1,9 +1,12 @@
+
 import React, { useState } from 'react';
 import { SpeakerIcon } from './icons/SpeakerIcon';
 import { SpeakerOffIcon } from './icons/SpeakerOffIcon';
 import { ClipboardIcon } from './icons/ClipboardIcon';
 import { WandIcon } from './icons/WandIcon';
 import { WarningIcon } from './icons/WarningIcon';
+// FIX: Import HammerIcon for the new "Forge Artifact" button.
+import { HammerIcon } from './icons/HammerIcon';
 
 interface AudioState {
     isGenerating?: boolean;
@@ -20,6 +23,8 @@ interface AnalysisResultProps {
   onGenerateAudio: () => void;
   onReEngineerPrompt: () => void;
   isReEngineering: boolean;
+  // FIX: Add onForgeArtifact to the component's props interface to accept the handler from App.tsx.
+  onForgeArtifact: () => void;
 }
 
 export const AnalysisResult: React.FC<AnalysisResultProps> = ({
@@ -30,6 +35,8 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({
   onGenerateAudio,
   onReEngineerPrompt,
   isReEngineering,
+  // FIX: Destructure the new onForgeArtifact prop.
+  onForgeArtifact,
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -65,6 +72,18 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({
                 {copied && <span className="text-xs font-medium text-brand-hover animate-fade-in">Copied!</span>}
             </button>
 
+            <div className="h-4 w-px bg-accent mx-1"></div>
+
+            {/* FIX: Add the "Forge Artifact" button to trigger the onForgeArtifact function. */}
+            <button
+                onClick={onForgeArtifact}
+                className="p-2 rounded-xl hover:bg-accent transition-colors focus:outline-none focus:ring-2 focus:ring-brand flex items-center gap-2"
+                title="Forge analysis and conversation into a markdown artifact"
+            >
+                <HammerIcon className="w-5 h-5 text-text-secondary" />
+                <span className="text-xs font-medium text-text-secondary">Forge Artifact</span>
+            </button>
+            
             <div className="h-4 w-px bg-accent mx-1"></div>
 
             <button

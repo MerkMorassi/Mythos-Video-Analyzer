@@ -180,7 +180,7 @@ export const generateSpeech = async (text: string, voice: string, speakingRate: 
     const ai = getClient();
     try {
         const config = {
-            responseModalities: [Modality.AUDIO],
+            responseModalities: ['AUDIO'], // Corrected: Use string literal 'AUDIO' instead of Modality.AUDIO
             speechConfig: {
               voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } },
               speakingRate: speakingRate,

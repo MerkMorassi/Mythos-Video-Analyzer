@@ -30,6 +30,7 @@ import { PencilIcon } from './components/icons/PencilIcon';
 import { ChatIcon } from './components/icons/ChatIcon';
 import { AgentChatView } from './components/AgentChatView';
 import { getApiKey } from './services/apiKeyService';
+import { htmlToMarkdown } from './utils/htmlToMarkdown';
 
 
 const fileToBase64 = (file: File): Promise<string> =>
@@ -571,6 +572,57 @@ export default function App() {
     }
   };
   
+    const handleForgeArtifact = () => {
+    if (!analysisResult) return;
+
+    // 1. Provenance Header
+    let artifactContent = `---
+Source Media: ${mediaSource instanceof File ? mediaSource.name : mediaSource || 'N/A'}
+Agent: ${agent.name}
+Timestamp: ${new Date().toISOString()}
+Locus: Media_Analysis_Agent // Localhost
+---\n\n`;
+
+    // 2. Initial Prompt
+    artifactContent += `## Initial Prompt (The Intent)\n\n`;
+    artifactContent += `> ${prompt}\n\n`;
+
+    // 3. Analysis Result
+    artifactContent += `## Analysis Result (The Flesh)\n\n`;
+    artifactContent += `${htmlToMarkdown(analysisResult)}\n\n`;
+    
+    // 4. Re-engineered prompt
+    if (reEngineeredPrompt) {
+        artifactContent += `## Re-Engineered Prompt (The Transmutation)\n\n`;
+        artifactContent += `${htmlToMarkdown(reEngineeredPrompt)}\n\n`;
+    }
+
+    // 5. Follow-up Conversation
+    if (chatHistory.length > 0) {
+      artifactContent += `## Follow-up Conversation (The Dialogue)\n\n`;
+      chatHistory.forEach(msg => {
+        const prefix = msg.role === 'user' ? '**HITL:**' : `**${agent.name}:**`;
+        const textContent = msg.parts.map(p => {
+            if (p.text) return htmlToMarkdown(p.text);
+            if (p.inlineData) return `[Attachment: ${p.inlineData.fileName || p.inlineData.mimeType}]`;
+            return '';
+        }).join(' ');
+        artifactContent += `${prefix} ${textContent}\n\n`;
+      });
+    }
+
+    // Create and download the file
+    const blob = new Blob([artifactContent], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `lore_artifact_${Date.now()}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const handleSaveAgentSettings = (updatedAgentData: Partial<Agent>) => {
      const newAgentData: Agent = {
          ...agent,
@@ -660,6 +712,7 @@ export default function App() {
                               onGenerateAudio={() => handleGenerateAudio(analysisResult, 'analysis-result')} 
                               onReEngineerPrompt={handleReEngineerPrompt} 
                               isReEngineering={isReEngineering} 
+                              onForgeArtifact={handleForgeArtifact}
                            />
                         </div>
                         

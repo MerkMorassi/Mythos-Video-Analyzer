@@ -12,7 +12,7 @@ import { getApiKey, saveApiKey } from '../services/apiKeyService';
 import { WarningIcon } from './icons/WarningIcon';
 
 interface KnowledgeViewProps {
-    onRunAnalysis: (type: 'SUMMARY' | 'QUESTIONS') => void;
+    onRunAnalysis: (type: 'SUMMARY' | 'QUESTIONS' | 'ENTITIES' | 'GAPS') => void;
     agent: Agent;
     onSaveSettings: (settings: Partial<Agent>) => void;
     onApiKeyUpdate: () => void;
@@ -90,7 +90,6 @@ export const KnowledgeView: React.FC<KnowledgeViewProps> = ({ onRunAnalysis, age
         }, 500);
     };
 
-    // Fix: Add handleSaveKey function definition
     const handleSaveKey = () => {
         if (!apiKeyInput.trim()) return;
         handleSaveWithFeedback(() => {
@@ -340,6 +339,8 @@ export const KnowledgeView: React.FC<KnowledgeViewProps> = ({ onRunAnalysis, age
                 <div className="grid grid-cols-2 gap-3">
                     <button onClick={() => onRunAnalysis('SUMMARY')} disabled={!hasApiKey || vectorCount === 0} className="flex items-center justify-center gap-2 bg-secondary border border-accent text-text-secondary hover:text-white p-3 rounded-xl text-xs uppercase font-bold disabled:opacity-50"><WandIcon className="w-4 h-4"/> Summarize</button>
                     <button onClick={() => onRunAnalysis('QUESTIONS')} disabled={!hasApiKey || vectorCount === 0} className="flex items-center justify-center gap-2 bg-secondary border border-accent text-text-secondary hover:text-white p-3 rounded-xl text-xs uppercase font-bold disabled:opacity-50"><WandIcon className="w-4 h-4"/> Suggest Q's</button>
+                    <button onClick={() => onRunAnalysis('ENTITIES')} disabled={!hasApiKey || vectorCount === 0} className="flex items-center justify-center gap-2 bg-secondary border border-accent text-text-secondary hover:text-white p-3 rounded-xl text-xs uppercase font-bold disabled:opacity-50"><WandIcon className="w-4 h-4"/> Extract Entities</button>
+                    <button onClick={() => onRunAnalysis('GAPS')} disabled={!hasApiKey || vectorCount === 0} className="flex items-center justify-center gap-2 bg-secondary border border-accent text-text-secondary hover:text-white p-3 rounded-xl text-xs uppercase font-bold disabled:opacity-50"><WandIcon className="w-4 h-4"/> Find Gaps</button>
                 </div>
             </CollapsibleSection>
         </div>
