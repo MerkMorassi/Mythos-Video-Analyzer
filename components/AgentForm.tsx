@@ -1,13 +1,12 @@
 
 import React, { useState, useCallback, useRef } from 'react';
 import { Agent, getAvailableVoices } from '../services/agentService';
-import { testKnowledgeBase, RagTestResult } from '../services/ragService';
 import { UserIcon } from './icons/UserIcon';
 import { TrashIcon } from './icons/TrashIcon';
 
 interface AgentFormProps {
   agent?: Agent | null;
-  onSave: (agent: Omit<Agent, 'id' | 'isCustom'> & { id?: string }) => void;
+  onSave: (agent: Partial<Agent>) => void;
   onCancel: () => void;
 }
 
@@ -22,62 +21,18 @@ const fileToBase64 = (file: File): Promise<string> =>
 const MAX_AVATAR_SIZE = 2 * 1024 * 1024; // 2MB
 
 export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'persona' | 'voice' | 'knowledge'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'voice'>('profile');
   
   const [name, setName] = useState(agent?.name || '');
-  const [systemPrompt, setSystemPrompt] = useState(agent?.systemPrompt || '');
   const [voice, setVoice] = useState(agent?.voice || getAvailableVoices()[0].name);
   const [avatar, setAvatar] = useState<string | undefined>(agent?.avatar);
   const [tags, setTags] = useState(agent?.tags?.join(', ') || '');
   const [speakingRate, setSpeakingRate] = useState(agent?.speakingRate ?? 1.0);
   const [autoPlayAudio, setAutoPlayAudio] = useState(agent?.autoPlayAudio ?? false);
-  const [knowledgeBaseUrl, setKnowledgeBaseUrl] = useState(agent?.knowledgeBaseUrl || '');
-  const [enableLocalRag, setEnableLocalRag] = useState(agent?.enableLocalRag ?? false);
   
   const [formError, setFormError] = useState<string | null>(null);
-  const [kbUrlError, setKbUrlError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
-  const [testStatus, setTestStatus] = useState<{ type: 'idle' | 'testing' | 'success' | 'error', message: string }>({ type: 'idle', message: '' });
-
-
-  const validateKbUrl = useCallback((url: string): boolean => {
-    if (!url) {
-        setKbUrlError(null);
-        return true;
-    }
-    try {
-        const parsedUrl = new URL(url);
-        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
-            setKbUrlError("URL must start with http:// or https://");
-            return false;
-        }
-        setKbUrlError(null);
-        return true;
-    } catch (_) {
-        setKbUrlError("Please enter a valid URL format.");
-        return false;
-    }
-  }, []);
-
-  const handleKbUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const newUrl = e.target.value;
-      setKnowledgeBaseUrl(newUrl);
-      validateKbUrl(newUrl);
-      setTestStatus({ type: 'idle', message: '' });
-  };
-
-  const handleTestConnection = async () => {
-    if (kbUrlError) return;
-    setTestStatus({ type: 'testing', message: 'Testing...' });
-    const result: RagTestResult = await testKnowledgeBase(knowledgeBaseUrl);
-    if (result.success) {
-        setTestStatus({ type: 'success', message: result.message });
-    } else {
-        setTestStatus({ type: 'error', message: result.message });
-    }
-  };
-
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -109,29 +64,19 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const isKbUrlValid = validateKbUrl(knowledgeBaseUrl);
-
-    if (!name.trim() || !systemPrompt.trim() || !isKbUrlValid) {
-        if (!name.trim() || !systemPrompt.trim()) {
-            setFormError("Agent Name and System Prompt cannot be empty.");
-            // Force switch to profile/persona if there are errors there
-            if (!name.trim()) setActiveTab('profile');
-            else if (!systemPrompt.trim()) setActiveTab('persona');
-        }
+    if (!name.trim()) {
+        setFormError("Agent Name cannot be empty.");
+        setActiveTab('profile');
         return;
     }
     setFormError(null);
     onSave({
-      id: agent?.id,
       name,
-      systemPrompt,
       voice,
       avatar,
       tags: tags.split(',').map(tag => tag.trim()).filter(Boolean),
       speakingRate,
       autoPlayAudio,
-      knowledgeBaseUrl,
-      enableLocalRag,
     });
   };
 
@@ -140,15 +85,13 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
       <form onSubmit={handleSubmit} className="bg-secondary border border-accent rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh] animate-fade-in">
         {/* Header */}
         <div className="p-6 border-b border-accent flex justify-between items-center bg-secondary sticky top-0">
-             <h2 className="text-xl font-bold text-text-primary">Configure Agent Persona</h2>
+             <h2 className="text-xl font-bold text-text-primary">Configure Agent Profile & Voice</h2>
         </div>
         
         {/* Tab Navigation */}
         <div className="flex border-b border-accent bg-secondary/50">
             <button type="button" onClick={() => setActiveTab('profile')} className={`flex-1 py-3 text-sm font-semibold transition-colors ${activeTab === 'profile' ? 'text-text-primary border-b-2 border-brand' : 'text-text-secondary hover:text-text-primary hover:bg-accent/50'}`}>Profile</button>
-            <button type="button" onClick={() => setActiveTab('persona')} className={`flex-1 py-3 text-sm font-semibold transition-colors ${activeTab === 'persona' ? 'text-text-primary border-b-2 border-brand' : 'text-text-secondary hover:text-text-primary hover:bg-accent/50'}`}>Persona</button>
             <button type="button" onClick={() => setActiveTab('voice')} className={`flex-1 py-3 text-sm font-semibold transition-colors ${activeTab === 'voice' ? 'text-text-primary border-b-2 border-brand' : 'text-text-secondary hover:text-text-primary hover:bg-accent/50'}`}>Voice</button>
-            <button type="button" onClick={() => setActiveTab('knowledge')} className={`flex-1 py-3 text-sm font-semibold transition-colors ${activeTab === 'knowledge' ? 'text-text-primary border-b-2 border-brand' : 'text-text-secondary hover:text-text-primary hover:bg-accent/50'}`}>Knowledge</button>
         </div>
 
         {/* Scrollable Content Area */}
@@ -216,26 +159,7 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
                     </div>
                 </div>
             )}
-
-            {activeTab === 'persona' && (
-                <div className="space-y-4 animate-fade-in h-full flex flex-col">
-                     <div className="flex-grow flex flex-col">
-                        <label htmlFor="agent-prompt" className="block text-sm font-medium text-text-primary mb-1">System Prompt <span className="text-red-400">*</span></label>
-                        <textarea
-                            id="agent-prompt"
-                            value={systemPrompt}
-                            onChange={(e) => setSystemPrompt(e.target.value)}
-                            placeholder="Define the agent's persona and instructions..."
-                            className="w-full flex-grow min-h-[250px] p-4 bg-primary border border-accent rounded-xl focus:ring-2 focus:ring-brand focus:outline-none resize-none font-mono text-sm leading-relaxed"
-                            required
-                        />
-                         <p className="text-xs text-text-secondary mt-2">
-                             This prompt defines the core personality and expertise of your agent. Be specific about the role (e.g., "You are an expert DoP").
-                         </p>
-                    </div>
-                </div>
-            )}
-
+            
             {activeTab === 'voice' && (
                  <div className="space-y-6 animate-fade-in">
                     <div>
@@ -284,60 +208,6 @@ export const AgentForm: React.FC<AgentFormProps> = ({ agent, onSave, onCancel })
                         <label htmlFor="auto-play-audio" className="ml-3 block text-sm text-text-primary cursor-pointer select-none">
                             Auto-play audio on completion
                         </label>
-                    </div>
-                 </div>
-            )}
-            
-            {activeTab === 'knowledge' && (
-                 <div className="space-y-6 animate-fade-in">
-                    <div className="bg-primary/30 p-4 rounded-xl border border-accent/50 space-y-4">
-                        <div className="flex items-center justify-between">
-                            <h3 className="text-sm font-bold text-text-primary">Mythos Vault (Local RAG)</h3>
-                            <input
-                                id="enable-local-rag"
-                                type="checkbox"
-                                checked={enableLocalRag}
-                                onChange={(e) => setEnableLocalRag(e.target.checked)}
-                                className="h-4 w-4 rounded border-accent bg-primary text-brand focus:ring-2 focus:ring-offset-2 focus:ring-offset-secondary focus:ring-brand"
-                            />
-                        </div>
-                        <p className="text-xs text-text-secondary">
-                            Enable the local vector database. The agent will prioritize information ingested in the 'Knowledge' tab.
-                        </p>
-                    </div>
-
-                    <div className="space-y-2">
-                        <label htmlFor="agent-kb-url" className="block text-sm font-medium text-text-primary">External Knowledge Base (Optional)</label>
-                        <p className="text-xs text-text-secondary mb-2">Connect to a remote API for additional context.</p>
-                        
-                        <div className="flex items-start gap-2">
-                            <div className="flex-grow">
-                                <input
-                                    id="agent-kb-url"
-                                    type="text"
-                                    value={knowledgeBaseUrl}
-                                    onChange={handleKbUrlChange}
-                                    placeholder="e.g., http://localhost:8000/search"
-                                    className={`w-full p-2 bg-primary border rounded-xl focus:ring-2 focus:outline-none transition-colors ${
-                                    kbUrlError ? 'border-red-500/50 focus:ring-red-500' : 'border-accent focus:ring-brand'
-                                    }`}
-                                />
-                            </div>
-                            <button
-                                type="button"
-                                onClick={handleTestConnection}
-                                disabled={!knowledgeBaseUrl || !!kbUrlError || testStatus.type === 'testing'}
-                                className="px-4 py-2 text-sm font-semibold bg-secondary border border-accent text-text-secondary rounded-xl hover:bg-accent hover:text-text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
-                            >
-                                {testStatus.type === 'testing' ? 'Testing...' : 'Test'}
-                            </button>
-                        </div>
-                        {kbUrlError && <p className="text-xs text-red-400 px-1">{kbUrlError}</p>}
-                        {testStatus.type !== 'idle' && testStatus.type !== 'testing' && (
-                            <p className={`text-xs px-1 ${testStatus.type === 'success' ? 'text-green-400' : 'text-red-400'}`}>
-                                {testStatus.message}
-                            </p>
-                        )}
                     </div>
                  </div>
             )}

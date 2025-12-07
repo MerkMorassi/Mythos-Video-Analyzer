@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Modality, GenerateContentConfig, HarmCategory, HarmBlockThreshold, Chat, Content } from "@google/genai";
 
 const API_KEY = process.env.API_KEY;
@@ -28,12 +29,38 @@ export const getModelForTask = (queryText: string): string => {
     const isHighReasoning = HIGH_REASONING_TRIGGERS.some(word => lowQuery.includes(word));
     
     if (isHighReasoning) {
-        // console.log("[MGP] High Reasoning task detected. Promoting to Pro.");
         return 'gemini-3-pro-preview';
     }
-    // console.log("[MGP] Standard task detected. Using Flash.");
     return 'gemini-2.5-flash';
 };
+
+// --- Model Fetching (from Mythos Vault reference) ---
+export const fetchModels = async (): Promise<{ id: string, name: string }[]> => {
+    try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${API_KEY}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error("API call failed to fetch models.");
+        }
+        const data = await response.json();
+        const compatibleModels = data.models
+            .filter((m: any) => m.supportedGenerationMethods?.includes("generateContent"))
+            .map((m: any) => ({
+                id: m.name.replace('models/', ''),
+                name: m.displayName
+            }));
+        
+        if (compatibleModels.length > 0) return compatibleModels;
+        throw new Error("No compatible models found.");
+
+    } catch (e) {
+        console.warn("Model fetch failed, using fallback list:", e);
+        return [
+            { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Fallback)' },
+            { id: 'gemini-3-pro-preview', name: 'Gemini 3.0 Pro (Fallback)' },
+        ];
+    }
+}
 
 // --- Embeddings ---
 export const getEmbeddings = async (text: string): Promise<number[] | null> => {
@@ -49,16 +76,6 @@ export const getEmbeddings = async (text: string): Promise<number[] | null> => {
     }
 };
 
-export const getAvailableModels = async (): Promise<{ displayName: string, name: string }[]> => {
-  // The client-side SDK does not support listing models dynamically.
-  // We return a hardcoded list of the primary models this application uses
-  // for display purposes in the UI.
-  return Promise.resolve([
-    { displayName: 'Gemini 3.0 Pro', name: 'gemini-3-pro-preview' },
-    { displayName: 'Gemini 2.5 Flash', name: 'gemini-2.5-flash' },
-  ]);
-};
-
 export const analyzeVideo = async (prompt: string, frames: string[], systemPrompt?: string): Promise<string> => {
   const imageParts = frames.map(base64Data => ({
     inlineData: { data: base64Data, mimeType: 'image/jpeg' },
@@ -67,7 +84,6 @@ export const analyzeVideo = async (prompt: string, frames: string[], systemPromp
   const config: GenerateContentConfig = { maxOutputTokens: 8192, safetySettings };
   if (systemPrompt && systemPrompt.trim()) config.systemInstruction = systemPrompt;
   
-  // Video Analysis usually implies high complexity, so we default to checking MGP but bias towards Pro for video
   const model = getModelForTask(prompt + " video analysis"); 
 
   try {
@@ -83,7 +99,6 @@ export const analyzeVideo = async (prompt: string, frames: string[], systemPromp
   } catch (error) {
     console.error("Error analyzing video:", error);
     if (error instanceof Error && error.message.includes(model)) {
-        // Fallback logic
         console.warn(`Model ${model} failed, falling back to gemini-2.5-flash.`);
         const fallbackResponse = await ai.models.generateContent({
           model: 'gemini-2.5-flash',
@@ -118,7 +133,6 @@ export const analyzeImage = async (prompt: string, imageBase64: string, mimeType
   } catch (error) {
     console.error("Error analyzing image:", error);
      if (error instanceof Error && error.message.includes(model)) {
-        // Fallback logic
         console.warn(`Model ${model} failed, falling back to gemini-2.5-flash.`);
         const fallbackResponse = await ai.models.generateContent({
           model: 'gemini-2.5-flash',
@@ -163,7 +177,6 @@ export const createChat = (systemPrompt?: string, initialHistory?: Content[]): C
     const config: GenerateContentConfig = { safetySettings };
     if (systemPrompt && systemPrompt.trim()) config.systemInstruction = systemPrompt;
 
-    // For chat, we start with Pro to ensure context retention and reasoning quality
     return ai.chats.create({
         model: 'gemini-3-pro-preview', 
         history: initialHistory,
@@ -190,7 +203,7 @@ export const generateSdxlPrompt = async (promptWithContext: string): Promise<str
 export const generateText = async (prompt: string): Promise<string> => {
     try {
         const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash', // Use the fast model for utility tasks
+          model: 'gemini-2.5-flash',
           contents: { parts: [{ text: prompt }] },
           config: { maxOutputTokens: 4096, safetySettings, temperature: 0.2 },
         });

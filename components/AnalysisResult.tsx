@@ -4,27 +4,31 @@ import { SpeakerIcon } from './icons/SpeakerIcon';
 import { SpeakerOffIcon } from './icons/SpeakerOffIcon';
 import { ClipboardIcon } from './icons/ClipboardIcon';
 import { WandIcon } from './icons/WandIcon';
+import { WarningIcon } from './icons/WarningIcon';
+
+interface AudioState {
+    isGenerating?: boolean;
+    isPlaying?: boolean;
+    buffer?: AudioBuffer | null;
+    error?: string | null;
+}
 
 interface AnalysisResultProps {
   result: string;
+  audioState?: AudioState;
   onPlayAudio: () => void;
   onStopAudio: () => void;
-  isSpeaking: boolean;
-  hasAudio: boolean;
-  onGenerateAudio?: () => void;
-  isAudioGenerating?: boolean;
+  onGenerateAudio: () => void;
   onReEngineerPrompt: () => void;
   isReEngineering: boolean;
 }
 
 export const AnalysisResult: React.FC<AnalysisResultProps> = ({
   result,
+  audioState,
   onPlayAudio,
   onStopAudio,
-  isSpeaking,
-  hasAudio,
   onGenerateAudio,
-  isAudioGenerating,
   onReEngineerPrompt,
   isReEngineering,
 }) => {
@@ -40,6 +44,12 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({
       setTimeout(() => setCopied(false), 2000);
     });
   };
+
+  const hasAudio = !!audioState?.buffer;
+  const isSpeaking = !!audioState?.isPlaying;
+  const isAudioGenerating = !!audioState?.isGenerating;
+  const audioError = audioState?.error;
+
 
   return (
     <div className="w-full h-full flex flex-col">
@@ -103,6 +113,12 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({
             )}
         </div>
       </div>
+      {audioError && (
+          <div className="mb-4 p-3 bg-orange-900/20 border border-orange-500/30 rounded-lg flex items-start gap-2 text-orange-200 animate-fade-in text-xs">
+              <WarningIcon className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <p>{audioError}</p>
+          </div>
+      )}
       <div
         className="prose prose-invert prose-base max-w-none flex-grow overflow-y-auto bg-primary/50 p-6 rounded-lg prose-headings:text-brand-hover prose-headings:font-semibold prose-headings:mt-8 prose-headings:mb-4 prose-strong:text-text-primary prose-blockquote:border-l-accent prose-li:marker:text-brand leading-loose space-y-6 prose-p:my-6"
         dangerouslySetInnerHTML={{ __html: result }}

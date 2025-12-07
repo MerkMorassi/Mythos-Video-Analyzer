@@ -10,6 +10,7 @@ export interface Agent {
   autoPlayAudio?: boolean;
   knowledgeBaseUrl?: string;
   enableLocalRag?: boolean;
+  protectedWords?: string;
 }
 
 const DEFAULT_AGENT: Agent = {
@@ -20,7 +21,8 @@ const DEFAULT_AGENT: Agent = {
   speakingRate: 1.0,
   autoPlayAudio: false,
   enableLocalRag: true, // Enabled by default for the single agent
-  tags: ['Cinematography', 'Direction', 'SDXL']
+  tags: ['Cinematography', 'Direction', 'SDXL'],
+  protectedWords: 'Kore, SDXL, Cinematography'
 };
 
 const AGENT_STORAGE_KEY = 'project-agent-v1';

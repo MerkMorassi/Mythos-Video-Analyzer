@@ -3,7 +3,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { MediaInput } from './components/MediaInput';
 import { AnalysisResult } from './components/AnalysisResult';
 import { Loader } from './components/Loader';
-import { analyzeVideo, analyzeImage, generateSpeech, createChat, generateSdxlPrompt, getEmbeddings } from './services/geminiService';
+import { analyzeVideo, analyzeImage, generateSpeech, createChat, generateSdxlPrompt, getEmbeddings, generateText } from './services/geminiService';
 import { extractFramesFromVideo } from './utils/video';
 import { decode, decodeAudioData } from './utils/audio';
 import { FramePreview } from './components/FramePreview';
@@ -71,19 +71,23 @@ interface ChatMessagePart {
 
 export default function App() {
   const [mediaSource, setMediaSource] = useState<File | string | null>(null);
-  const [mediaType, setMediaType] = useState<'video' | 'image'>('video');
+  const [mediaType, setMediaType] = useState<'video' | 'image'>('image');
   const [prompt, setPrompt] = useState<string>('');
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [progressMessage, setProgressMessage] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
-  const [audioError, setAudioError] = useState<string | null>(null);
+  
+  const [messageAudioStates, setMessageAudioStates] = useState<Record<string, {
+    isGenerating: boolean;
+    isPlaying: boolean;
+    buffer: AudioBuffer | null;
+    error: string | null;
+  }>>({});
+  
   const [ragWarning, setRagWarning] = useState<string | null>(null);
   const [extractedFrames, setExtractedFrames] = useState<string[]>([]);
-  const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
-  const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
-  const [isAudioGenerating, setIsAudioGenerating] = useState<boolean>(false);
-  const [playAudioOnLoad, setPlayAudioOnLoad] = useState<boolean>(false);
+  
   const [clearKey, setClearKey] = useState<number>(0);
   
   const [activeTab, setActiveTab] = useState<'analyzer' | 'templates' | 'knowledge'>('analyzer');
@@ -93,7 +97,7 @@ export default function App() {
   const [isAgentSettingsOpen, setIsAgentSettingsOpen] = useState(false);
   
   const [chatSession, setChatSession] = useState<Chat | null>(null);
-  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'model'; parts: ChatMessagePart[] }[]>([]);
+  const [chatHistory, setChatHistory] = useState<{ id: string; role: 'user' | 'model'; parts: ChatMessagePart[] }[]>([]);
   const [chatMessage, setChatMessage] = useState<string>('');
   const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
   const [isChatVisible, setIsChatVisible] = useState(false);
@@ -104,7 +108,7 @@ export default function App() {
 
 
   const audioContextRef = useRef<AudioContext | null>(null);
-  const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const audioSourceRefs = useRef<Record<string, AudioBufferSourceNode | null>>({});
   const chatEndRef = useRef<HTMLDivElement>(null);
   const scrollTriggerRef = useRef<HTMLDivElement>(null);
 
@@ -162,50 +166,49 @@ export default function App() {
     }
     return audioContextRef.current;
   };
-  
-  const playAudio = useCallback(() => {
-    if (!audioBuffer || isSpeaking) return;
+
+  const playAudio = useCallback((messageId: string) => {
+    const audioState = messageAudioStates[messageId];
+    if (!audioState?.buffer || audioState.isPlaying) return;
 
     const audioCtx = getAudioContext();
     const source = audioCtx.createBufferSource();
-    source.buffer = audioBuffer;
+    source.buffer = audioState.buffer;
     source.connect(audioCtx.destination);
     source.onended = () => {
-      setIsSpeaking(false);
-      audioSourceRef.current = null;
+      setMessageAudioStates(prev => ({...prev, [messageId]: {...prev[messageId], isPlaying: false}}));
+      audioSourceRefs.current[messageId] = null;
     };
     source.start();
-    setIsSpeaking(true);
-    audioSourceRef.current = source;
-  }, [audioBuffer, isSpeaking]);
+    setMessageAudioStates(prev => ({...prev, [messageId]: {...prev[messageId], isPlaying: true}}));
+    audioSourceRefs.current[messageId] = source;
+  }, [messageAudioStates]);
 
-  useEffect(() => {
-    if (audioBuffer && playAudioOnLoad && !isSpeaking) {
-      playAudio();
-      setPlayAudioOnLoad(false);
+  const stopAudio = useCallback((messageId: string) => {
+    if (audioSourceRefs.current[messageId]) {
+      audioSourceRefs.current[messageId]?.stop();
     }
-  }, [audioBuffer, playAudioOnLoad, isSpeaking, playAudio]);
-
-  const stopAudio = useCallback(() => {
-    if (audioSourceRef.current) {
-      audioSourceRef.current.stop();
-    }
+  }, []);
+  
+  const stopAllAudio = useCallback(() => {
+    Object.keys(audioSourceRefs.current).forEach(id => {
+        if (audioSourceRefs.current[id]) {
+            audioSourceRefs.current[id]?.stop();
+        }
+    });
   }, []);
   
   const resetState = useCallback(() => {
     setMediaSource(null);
-    setMediaType('video');
+    setMediaType('image');
     setPrompt('');
     setAnalysisResult(null);
     setError(null);
-    setAudioError(null);
     setRagWarning(null);
     setRetrievedContext(null);
     setExtractedFrames([]);
-    setAudioBuffer(null);
-    setIsAudioGenerating(false);
-    setPlayAudioOnLoad(false);
-    stopAudio();
+    setMessageAudioStates({});
+    stopAllAudio();
     setChatSession(null);
     setChatHistory([]);
     setChatMessage('');
@@ -213,33 +216,30 @@ export default function App() {
     setReEngineeredPrompt(null);
     setIsReEngineering(false);
     setClearKey(prevKey => prevKey + 1); 
-  }, [stopAudio]);
+  }, [stopAllAudio]);
 
   const handleMediaChange = useCallback((media: { type: 'video' | 'image'; source: File | string | null }) => {
     setMediaType(media.type);
     setMediaSource(media.source);
     setAnalysisResult(null);
     setError(null);
-    setAudioError(null);
     setRagWarning(null);
     setRetrievedContext(null);
     setExtractedFrames([]);
-    setAudioBuffer(null);
-    setIsAudioGenerating(false);
-    stopAudio();
+    setMessageAudioStates({});
+    stopAllAudio();
     setChatSession(null);
     setChatHistory([]);
     setChatMessage('');
     setIsChatVisible(false);
     setReEngineeredPrompt(null);
     setIsReEngineering(false);
-  }, [stopAudio]);
+  }, [stopAllAudio]);
 
-  const handleGenerateAudio = async (textToSpeak: string) => {
+  const handleGenerateAudio = async (textToSpeak: string, messageId: string) => {
     if (!agent?.voice) return;
 
-    setIsAudioGenerating(true);
-    setAudioError(null);
+    setMessageAudioStates(prev => ({...prev, [messageId]: { ...prev[messageId], isGenerating: true, error: null }}));
 
     try {
         const plainText = textToSpeak.replace(/<[^>]*>/g, '');
@@ -248,13 +248,17 @@ export default function App() {
         const audioCtx = getAudioContext();
         const buffer = await decodeAudioData(audioBytes, audioCtx, 24000, 1);
         
-        setAudioBuffer(buffer);
-        setPlayAudioOnLoad(true);
+        setMessageAudioStates(prev => ({
+            ...prev,
+            [messageId]: { ...prev[messageId], isGenerating: false, buffer, isPlaying: false }
+        }));
+        playAudio(messageId);
     } catch (audioErr) {
          console.error("Audio generation failed", audioErr);
-         setAudioError("Audio generation failed. Please try again.");
-    } finally {
-        setIsAudioGenerating(false);
+         setMessageAudioStates(prev => ({
+            ...prev,
+            [messageId]: { ...prev[messageId], isGenerating: false, error: "Audio generation failed. Please try again." }
+        }));
     }
   };
 
@@ -266,14 +270,11 @@ export default function App() {
     setIsLoading(true);
     setAnalysisResult(null);
     setError(null);
-    setAudioError(null);
     setRagWarning(null);
     setRetrievedContext(null);
     setExtractedFrames([]);
-    stopAudio();
-    setAudioBuffer(null);
-    setIsAudioGenerating(false);
-    setPlayAudioOnLoad(false);
+    stopAllAudio();
+    setMessageAudioStates({});
     setChatSession(null);
     setChatHistory([]);
     setChatMessage('');
@@ -308,8 +309,8 @@ export default function App() {
               if (directHitsIds && directHitsIds.length > 0) {
                   const directDocs = allVectors.filter(v => directHitsIds.includes(v.id));
                   if (directDocs.length > 0) {
-                       const text = directDocs.map(d => d.text).join('\n\n');
-                       localContextParts.push(`=== EXACT COORDINATE MATCHES (Teleport) ===\n${text}`);
+                       const text = directDocs.map(d => `>>> [DIRECT TELEPORT: ${d.source}]\n${d.text}`).join('\n\n');
+                       localContextParts.push(`=== EXACT COORDINATE MATCHES (SHANNON/LOGOS) ===\n${text}`);
                   }
               }
 
@@ -319,12 +320,12 @@ export default function App() {
                   if (queryEmbedding) {
                       const scored = allVectors.map(v => ({ ...v, score: cosineSimilarity(queryEmbedding, v.vector) }));
                       const topMatches = scored.sort((a, b) => b.score - a.score)
-                                             .slice(0, 5)
-                                             .filter(v => v.score > 0.45); // Threshold
+                                             .slice(0, 8)
+                                             .filter(v => v.score > 0.45);
                       
                       if (topMatches.length > 0) {
-                          const text = topMatches.map(m => m.text).join('\n\n');
-                          localContextParts.push(`=== RESONANT MATCHES (Vector Search) ===\n${text}`);
+                          const text = topMatches.map(m => `--- [RESONANCE: ${m.source}] ---\n${m.text}`).join('\n\n');
+                           localContextParts.push(`=== RESONANT MATCHES (ELARA/GNOSIS) ===\n${text}`);
                       }
                   }
               }
@@ -332,31 +333,28 @@ export default function App() {
               console.error("Local RAG failed:", e);
           }
       }
-
-      // Combine Contexts with Hybrid Memory Stream Structure
-      const hasContext = localContextParts.length > 0 || externalContextParts.length > 0;
       
+      const hasContext = localContextParts.length > 0 || externalContextParts.length > 0;
+      const protectedWordsInstruction = agent.protectedWords ? `3. CRITICAL: Do not modify these protected terms: ${agent.protectedWords}.` : '';
+
       if (hasContext) {
-          const localContextBlock = localContextParts.join('\n\n');
-          const externalContextBlock = externalContextParts.join('\n\n');
-          
+          const contextBlock = [...localContextParts, ...externalContextParts].join('\n\n');
           analysisPrompt = `
           HYBRID MEMORY STREAM:
-          
-          ${localContextBlock ? localContextBlock : '(No local matches found)'}
-          
-          ${externalContextBlock ? externalContextBlock : ''}
-          
+          ${contextBlock}
+
           USER QUERY: ${prompt}
-          
+
           INSTRUCTIONS:
-          1. Prioritize EXACT COORDINATE MATCHES (Teleport) for facts/code/specifics. 
+          1. Prioritize EXACT COORDINATE MATCHES for facts/code. 
           2. Use RESONANT MATCHES for nuance/context.
-          3. If External Knowledge is provided, use it to supplement the Local Memory.
-          4. Ground your analysis strictly in this provided context where applicable.`;
-          
-          setRetrievedContext(`${localContextBlock}\n\n${externalContextBlock}`.trim());
+          ${protectedWordsInstruction}
+          `;
+          setRetrievedContext(contextBlock.trim());
+      } else if (agent.protectedWords) {
+          analysisPrompt = `${prompt}\n\nINSTRUCTIONS:\n${protectedWordsInstruction.replace('3. ', '1. ')}`;
       }
+
 
       let resultText = '';
       let historyParts: Part[] = [];
@@ -408,7 +406,7 @@ export default function App() {
       setChatHistory([]); 
 
       if (agent.voice && agent.autoPlayAudio) {
-          handleGenerateAudio(resultText);
+          handleGenerateAudio(resultText, 'analysis-result');
       }
 
     } catch (err) {
@@ -419,6 +417,44 @@ export default function App() {
       setProgressMessage('');
     }
   };
+  
+    const handleKnowledgeAnalytics = async (type: 'SUMMARY' | 'QUESTIONS') => {
+        setIsLoading(true);
+        setProgressMessage(`Running ${type.toLowerCase()} on Knowledge Base...`);
+        setError(null);
+        setActiveTab('analyzer'); // Switch to analyzer view to show results
+        
+        try {
+            const vectors = await vectorDb.getAllVectors();
+            if (vectors.length === 0) {
+                setError("Knowledge Base is empty. Ingest documents to run analytics.");
+                return;
+            }
+
+            const sample = vectors.sort(() => 0.5 - Math.random())
+                                .slice(0, 20)
+                                .map(v => v.text)
+                                .join("\n\n---\n\n");
+
+            const prompt = type === 'SUMMARY'
+                ? `Synthesize these text fragments from a knowledge base into a high-level executive briefing. Identify key themes, entities, and relationships.\n\nCONTEXT:\n${sample}`
+                : `Based on these text fragments, suggest three insightful questions a user might ask.\n\nCONTEXT:\n${sample}`;
+            
+            const result = await generateText(prompt);
+            
+            setAnalysisResult("AI analysis of your Knowledge Base is complete.");
+            const messageId = `analytics-${Date.now()}`;
+            setChatHistory(prev => [...prev, { id: messageId, role: 'model', parts: [{ text: result }] }]);
+            setIsChatVisible(true);
+
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+            setError(`Failed to run analytics: ${errorMessage}`);
+        } finally {
+            setIsLoading(false);
+            setProgressMessage('');
+        }
+    };
 
   const handleSendMessage = async (files?: File[]) => {
     if (!chatSession || (!chatMessage.trim() && (!files || files.length === 0))) return;
@@ -437,7 +473,8 @@ export default function App() {
         }
         if (currentMessage.trim()) parts.push({ text: currentMessage });
 
-        const newHistoryEntry = { 
+        const newHistoryEntry = {
+            id: `user-${Date.now()}`, 
             role: 'user' as const, 
             parts: parts.map(p => ({
                 text: p.text,
@@ -449,10 +486,17 @@ export default function App() {
         const result = await chatSession.sendMessage({ message: parts });
         const responseText = result.text;
         
-        if (responseText) setChatHistory(prev => [...prev, { role: 'model', parts: [{ text: responseText }] }]);
+        if (responseText) {
+          const modelMessageId = `model-${Date.now()}`;
+          setChatHistory(prev => [...prev, { id: modelMessageId, role: 'model', parts: [{ text: responseText }] }]);
+          if (agent.autoPlayAudio) {
+              handleGenerateAudio(responseText, modelMessageId);
+          }
+        }
+
     } catch (err) {
         console.error("Chat error:", err);
-        setChatHistory(prev => [...prev, { role: 'model', parts: [{ text: "Sorry, I encountered an error processing your message. Please try again." }] }]);
+        setChatHistory(prev => [...prev, { id: `error-${Date.now()}`, role: 'model', parts: [{ text: "Sorry, I encountered an error processing your message. Please try again." }] }]);
     } finally {
         setIsChatLoading(false);
     }
@@ -485,12 +529,10 @@ export default function App() {
     }
   };
   
-  const handleSaveAgentSettings = (updatedAgent: Omit<Agent, 'id' | 'isCustom'> & { id?: string }) => {
-     // Even though the form passes partials, we merge with existing ID since we are single-agent
+  const handleSaveAgentSettings = (updatedAgentData: Partial<Agent>) => {
      const newAgentData: Agent = {
-         ...agent, // keep existing id
-         ...updatedAgent,
-         id: agent.id // ensure ID doesn't change
+         ...agent,
+         ...updatedAgentData,
      };
      saveAgent(newAgentData);
      setAgent(newAgentData);
@@ -569,7 +611,6 @@ export default function App() {
             </div>
 
             {error && <div className="p-4 bg-red-900/20 border border-red-500/30 rounded-xl flex items-start gap-3 text-red-200 animate-fade-in"><WarningIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><p className="text-sm">{error}</p></div>}
-            {audioError && <div className="p-4 bg-orange-900/20 border border-orange-500/30 rounded-xl flex items-start gap-3 text-orange-200 animate-fade-in"><WarningIcon className="w-5 h-5 flex-shrink-0 mt-0.5" /><p className="text-sm">{audioError}</p></div>}
             
             {isLoading && <div className="py-12 animate-fade-in"><Loader message={progressMessage} mediaType={mediaType} /></div>}
 
@@ -583,7 +624,15 @@ export default function App() {
                   <>
                     <div className="border-t border-accent pt-8"><FramePreview frames={extractedFrames} title={mediaType === 'video' ? 'Extracted Keyframes' : 'Analyzed Image'} /></div>
                     <div className="bg-secondary/30 border border-accent rounded-xl p-6 shadow-sm">
-                       <AnalysisResult result={analysisResult} onPlayAudio={playAudio} onStopAudio={stopAudio} isSpeaking={isSpeaking} hasAudio={!!audioBuffer} onGenerateAudio={() => handleGenerateAudio(analysisResult)} isAudioGenerating={isAudioGenerating} onReEngineerPrompt={handleReEngineerPrompt} isReEngineering={isReEngineering} />
+                       <AnalysisResult 
+                          result={analysisResult} 
+                          audioState={messageAudioStates['analysis-result']}
+                          onPlayAudio={() => playAudio('analysis-result')} 
+                          onStopAudio={() => stopAudio('analysis-result')} 
+                          onGenerateAudio={() => handleGenerateAudio(analysisResult, 'analysis-result')} 
+                          onReEngineerPrompt={handleReEngineerPrompt} 
+                          isReEngineering={isReEngineering} 
+                       />
                     </div>
                     
                     {isReEngineering && <ReEngineeredPromptLoader />}
@@ -591,7 +640,17 @@ export default function App() {
 
                     <div ref={scrollTriggerRef} className="h-1" />
                     
-                    {chatHistory.map((msg, index) => <ChatMessage key={index} message={msg} agent={agent} />)}
+                    {chatHistory.map((msg) => (
+                      <ChatMessage 
+                        key={msg.id} 
+                        message={msg} 
+                        agent={agent} 
+                        audioState={messageAudioStates[msg.id]}
+                        onPlayAudio={() => playAudio(msg.id)}
+                        onStopAudio={() => stopAudio(msg.id)}
+                        onGenerateAudio={(text) => handleGenerateAudio(text, msg.id)}
+                      />
+                    ))}
                     
                     {isChatLoading && (
                        <div className="flex justify-start">
@@ -622,7 +681,11 @@ export default function App() {
             
           </div>
         ) : activeTab === 'knowledge' ? (
-           <KnowledgeView />
+           <KnowledgeView 
+             onRunAnalysis={handleKnowledgeAnalytics}
+             agent={agent}
+             onSaveSettings={handleSaveAgentSettings}
+           />
         ) : (
            <PromptTemplatesView />
         )}
