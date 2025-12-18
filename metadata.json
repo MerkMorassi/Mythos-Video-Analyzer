@@ -1,5 +1,5 @@
 {
-  "name": "Media Analysis Agent",
+  "name": "Visual Analysis Agent",
   "description": "Upload a video or image, or provide a URL, then use Gemini to analyze its contents based on your prompts. The application extracts keyframes from videos or uses the uploaded image for detailed visual understanding and analysis.",
   "requestFramePermissions": [
     "microphone"
